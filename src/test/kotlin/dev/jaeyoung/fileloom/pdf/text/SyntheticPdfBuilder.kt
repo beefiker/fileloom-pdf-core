@@ -24,9 +24,23 @@ internal object SyntheticPdfBuilder {
         includeEncryptStub = true,
     )
 
+    /**
+     * Emits a PDF whose trailer keyword and dict-open `<<` share a single
+     * line — the exact pattern emitted by pdflatex / arXiv-style toolchains
+     * that broke `fileloom-pdf-parser-core` 0.3.0's xref reader.
+     *
+     * Used by the regression test for the lenient `PdfDocument` introduced
+     * in `fileloom-pdf-core` 0.1.1.
+     */
+    fun singleLineTrailer(): ByteArray = buildSimplePdf(
+        content = "BT /F1 12 Tf 100 700 Td (Inline trailer page) Tj ET",
+        singleLineTrailer = true,
+    )
+
     private fun buildSimplePdf(
         content: String,
         includeEncryptStub: Boolean = false,
+        singleLineTrailer: Boolean = false,
     ): ByteArray {
         val contentBytes = content.toByteArray(StandardCharsets.ISO_8859_1)
         val compressed = deflate(contentBytes)
@@ -95,8 +109,12 @@ internal object SyntheticPdfBuilder {
 
         // trailer
         val trailerBuilder = StringBuilder()
-        trailerBuilder.append("trailer\n")
-        trailerBuilder.append("<< /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
+        if (singleLineTrailer) {
+            trailerBuilder.append("trailer << /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
+        } else {
+            trailerBuilder.append("trailer\n")
+            trailerBuilder.append("<< /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
+        }
         trailerBuilder.append("startxref\n")
         trailerBuilder.append("$xrefOffset\n")
         trailerBuilder.append("%%EOF\n")
