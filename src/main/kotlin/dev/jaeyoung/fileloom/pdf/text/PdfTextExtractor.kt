@@ -1,10 +1,9 @@
 package dev.jaeyoung.fileloom.pdf.text
 
-import dev.jaeyoung.fileloom.pdf.document.PdfDocumentReader
-import dev.jaeyoung.fileloom.pdf.document.PdfLowLevelDocument
 import dev.jaeyoung.fileloom.pdf.source.PdfByteSource
 import dev.jaeyoung.fileloom.pdf.text.internal.ContentStreamInterpreter
 import dev.jaeyoung.fileloom.pdf.text.internal.PageResources
+import dev.jaeyoung.fileloom.pdf.text.internal.PdfDocument
 import dev.jaeyoung.fileloom.pdf.text.internal.PdfPageWalker
 import dev.jaeyoung.fileloom.pdf.text.internal.PdfStreamReader
 import dev.jaeyoung.fileloom.pdf.text.internal.WalkedPage
@@ -28,7 +27,7 @@ import dev.jaeyoung.fileloom.pdf.text.internal.WalkedPage
  * surface a "no readable text" affordance to the user.
  */
 class PdfTextExtractor private constructor(
-    private val document: PdfLowLevelDocument,
+    private val document: PdfDocument,
     private val pages: List<WalkedPage>,
 ) : AutoCloseable {
 
@@ -52,20 +51,13 @@ class PdfTextExtractor private constructor(
     companion object {
         /**
          * Open a PDF for text extraction. Returns null if the file isn't a
-         * supported PDF variant (encrypted, malformed header, xref-stream-only).
+         * supported PDF variant (encrypted, malformed header, xref-stream-only,
+         * etc.). Never throws.
          */
         fun open(source: PdfByteSource): PdfTextExtractor? {
-            val document = runCatching { PdfDocumentReader.open(source) }.getOrNull() ?: return null
-            if (isEncrypted(document)) {
-                document.close()
-                return null
-            }
+            val document = PdfDocument.open(source) ?: return null
             val pages = PdfPageWalker(document).collect()
             return PdfTextExtractor(document, pages)
-        }
-
-        private fun isEncrypted(document: PdfLowLevelDocument): Boolean {
-            return document.trailer.entries.containsKey("Encrypt")
         }
     }
 }

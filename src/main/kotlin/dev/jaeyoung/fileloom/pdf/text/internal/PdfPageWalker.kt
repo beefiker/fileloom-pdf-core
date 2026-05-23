@@ -1,21 +1,16 @@
 package dev.jaeyoung.fileloom.pdf.text.internal
 
-import dev.jaeyoung.fileloom.pdf.document.PdfLowLevelDocument
 import dev.jaeyoung.fileloom.pdf.syntax.PdfObject
 
 /**
- * Walks the /Pages tree (handling nested /Kids and inherited resources) into a
- * flat list of leaf page dictionaries paired with their inherited /Resources.
- *
- * `fileloom-pdf-parser-core` has a private equivalent, but only exposes it
- * through `PdfLinkMetadataParser` (which is link-focused). We reimplement here
- * because we need access to the page's Resources entry for font lookup.
+ * Walks the /Pages tree (handling nested /Kids and inherited /Resources) into
+ * a flat list of leaf page dictionaries paired with their inherited resources.
  */
-internal class PdfPageWalker(private val document: PdfLowLevelDocument) {
+internal class PdfPageWalker(private val document: PdfDocument) {
 
     fun collect(): List<WalkedPage> {
         val trailer = document.trailer
-        val root = resolve(trailer.entries["Root"]) as? PdfObject.Dictionary ?: return emptyList()
+        val root = document.deref(trailer.entries["Root"]) as? PdfObject.Dictionary ?: return emptyList()
         val pages = root.entries["Pages"] ?: return emptyList()
         val output = mutableListOf<WalkedPage>()
         val visited = mutableSetOf<PdfObject.Reference>()
@@ -37,8 +32,8 @@ internal class PdfPageWalker(private val document: PdfLowLevelDocument) {
         val reference = value as? PdfObject.Reference
         if (reference != null && !visited.add(reference)) return
 
-        val dictionary = resolve(value) as? PdfObject.Dictionary ?: return
-        val resources = (resolve(dictionary.entries["Resources"]) as? PdfObject.Dictionary)
+        val dictionary = document.deref(value) as? PdfObject.Dictionary ?: return
+        val resources = (document.deref(dictionary.entries["Resources"]) as? PdfObject.Dictionary)
             ?: inheritedResources
 
         val typeName = (dictionary.entries["Type"] as? PdfObject.Name)?.value
@@ -50,7 +45,7 @@ internal class PdfPageWalker(private val document: PdfLowLevelDocument) {
             return
         }
 
-        val kids = resolve(dictionary.entries["Kids"]) as? PdfObject.ArrayValue ?: return
+        val kids = document.deref(dictionary.entries["Kids"]) as? PdfObject.ArrayValue ?: return
         kids.items.forEach { kid ->
             collectNode(
                 value = kid,
@@ -58,15 +53,6 @@ internal class PdfPageWalker(private val document: PdfLowLevelDocument) {
                 output = output,
                 visited = visited,
             )
-        }
-    }
-
-    private fun resolve(value: PdfObject?): PdfObject? {
-        if (value == null) return null
-        return if (value is PdfObject.Reference) {
-            runCatching { document.resolve(value) }.getOrNull()
-        } else {
-            value
         }
     }
 }

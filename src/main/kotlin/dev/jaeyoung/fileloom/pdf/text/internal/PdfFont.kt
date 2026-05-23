@@ -1,6 +1,5 @@
 package dev.jaeyoung.fileloom.pdf.text.internal
 
-import dev.jaeyoung.fileloom.pdf.document.PdfLowLevelDocument
 import dev.jaeyoung.fileloom.pdf.syntax.PdfObject
 
 /**
@@ -65,13 +64,9 @@ internal class PdfFont(
     companion object {
         fun load(
             fontDict: PdfObject.Dictionary,
-            document: PdfLowLevelDocument,
+            document: PdfDocument,
         ): PdfFont {
-            val resolve: (PdfObject?) -> PdfObject? = { value ->
-                if (value is PdfObject.Reference) {
-                    runCatching { document.resolve(value) }.getOrNull()
-                } else value
-            }
+            val resolve: (PdfObject?) -> PdfObject? = { value -> document.deref(value) }
 
             val subtype = (fontDict.entries["Subtype"] as? PdfObject.Name)?.value
             val isCompositeFont = subtype == "Type0"
@@ -95,7 +90,7 @@ internal class PdfFont(
 
         private fun loadToUnicode(
             fontDict: PdfObject.Dictionary,
-            document: PdfLowLevelDocument,
+            document: PdfDocument,
             resolve: (PdfObject?) -> PdfObject?,
         ): ToUnicodeCMap? {
             val raw = fontDict.entries["ToUnicode"] ?: return null
