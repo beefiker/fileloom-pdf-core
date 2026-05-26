@@ -1,23 +1,25 @@
 # fileloom-pdf-core
 
-PDF content/text extraction core library for Fileloom.
+PDF text, outline, and annotation core library for Fileloom.
 
 Coordinates:
 
 ```kotlin
-implementation("dev.jaeyoung:fileloom-pdf-core:0.1.0")
+implementation("dev.jaeyoung:fileloom-pdf-core:0.2.0")
 ```
 
 ## Goal
 
-Provide a pure Kotlin/JVM layer that consumes a PDF and exposes its text content in reading order, so Fileloom can:
+Provide a pure Kotlin/JVM layer that consumes a PDF and exposes reader-focused metadata, so Fileloom can:
 
 1. Surface PDF text to TalkBack (Android Screen Reader) via Compose semantics overlays on top of the existing `PdfRenderer` bitmap.
 2. Feed the EPUB TTS engine arbitrary `String` content for "read aloud" on PDFs.
+3. Show PDF outline trees as a table of contents.
+4. Export Fileloom's persisted highlights and sticky notes as standard PDF annotations.
 
-This is the text-extraction half of the broader PDF roadmap. Outline (TOC) walking and PDF writing (image-only pages) are planned as separate modules in the same artifact.
+This remains intentionally small: Fileloom still renders pages with Android `PdfRenderer`, while this library handles the metadata and write-back paths that the platform renderer does not expose consistently.
 
-## Scope (v0.1)
+## Scope (v0.2)
 
 In scope:
 
@@ -29,8 +31,10 @@ In scope:
 - **ToUnicode CMap** parser (`bfchar` + `bfrange` entries). This is the load-bearing piece — without it, glyph codes don't map back to readable Unicode.
 - Standard-14 encoding fallback (`WinAnsiEncoding`, `MacRomanEncoding`, `StandardEncoding`).
 - Heuristic reading-order: top-to-bottom by Y, left-to-right by X within a line band.
+- Outline extraction: walks `/Outlines` linked lists, preserves nested children, and resolves direct page destinations to zero-based page indexes.
+- Incremental annotation export: appends Highlight and Text/sticky-note annotation objects, updates page `/Annots`, preserves the original bytes, and links the new xref to the previous one with `/Prev`.
 
-Explicitly **out of scope** for v0.1:
+Explicitly **out of scope** for v0.2:
 
 - Encrypted PDFs (use `dev.jaeyoung:fileloom-pdf-security-core` first to decrypt to a plaintext temp file).
 - Cross-reference streams (PDF 1.5+ binary xref). The dependency `fileloom-pdf-parser-core:0.3.0` only handles classic xref tables; PDFs that use xref streams will be skipped with a graceful empty result.
@@ -38,6 +42,7 @@ Explicitly **out of scope** for v0.1:
 - Embedded-font glyph rendering (we only need glyph code -> Unicode, never code -> shape).
 - OCR for scanned/image-only PDFs.
 - Text formatting preservation (paragraphs, columns, tables). Output is plain text in approximate reading order.
+- Full annotation editing, ink/stylus pressure, underline/strikethrough export, form filling, and optional-content/layer browser support.
 
 ## Reference research
 
@@ -71,6 +76,8 @@ This library sits on top of `dev.jaeyoung:fileloom-pdf-parser-core:0.3.0`, which
 We add on top:
 
 - `dev.jaeyoung.fileloom.pdf.text.PdfTextExtractor` — public entry point.
+- `dev.jaeyoung.fileloom.pdf.outline.PdfOutlineExtractor` — outline / TOC entry point.
+- `dev.jaeyoung.fileloom.pdf.annotation.PdfAnnotationWriter` — incremental Highlight and sticky-note export.
 - `dev.jaeyoung.fileloom.pdf.text.internal.*` — content stream + font + CMap.
 
 ## Public API
@@ -81,6 +88,26 @@ val extractor = PdfTextExtractor.open(source)
 val pageCount = extractor.pageCount
 val pageText: String = extractor.extractTextForPage(pageIndex = 0)
 extractor.close()
+```
+
+```kotlin
+PdfOutlineExtractor.open(ByteArrayPdfByteSource(pdfBytes)).use { extractor ->
+    val toc: List<PdfTocEntry> = extractor?.extractTableOfContents().orEmpty()
+}
+```
+
+```kotlin
+val annotatedBytes = PdfAnnotationWriter.appendAnnotations(
+    pdfBytes = originalBytes,
+    annotations = listOf(
+        PdfAnnotation.Highlight(
+            pageIndex = 0,
+            rects = listOf(PdfAnnotationRect(left = 96f, top = 84f, right = 260f, bottom = 110f)),
+            color = PdfAnnotationColor(red = 1f, green = 0.92f, blue = 0.23f),
+            contents = "Important"
+        )
+    )
+)
 ```
 
 ## Requirements
@@ -102,13 +129,18 @@ Local development:
 ./gradlew publishToMavenLocal
 ```
 
-Maven Central bundle (signs/checksums to be added manually before upload):
+Maven Central bundle ZIP:
 
 ```bash
 ./gradlew publishToMavenCentralBundle
-# Then GPG-sign each artifact + add .md5/.sha1 checksums per the policy in
-# Fileloom's FEEDBACK_TODO.md "Publication target" section.
 ```
+
+The task writes `build/maven-central-bundle/fileloom-pdf-core-<version>-maven-central-bundle.zip`.
+It stages the jar, sources jar, javadoc jar, and POM; creates `.md5` and `.sha1`
+checksums; and GPG-signs each artifact with `gpg --detach-sign --armor`.
+Set `-Psigning.gnupg.keyName=<KEY_ID>` to force a specific key, otherwise GPG's
+default secret key is used. This task only creates the ZIP; upload to
+Maven Central is a separate manual step.
 
 ## License
 

@@ -23,13 +23,14 @@ import java.nio.charset.StandardCharsets
  *
  * The lexer + object parser primitives from parser-core remain in use — only
  * the document layer is replaced. Cross-reference streams (PDF 1.5+ binary
- * xref) and incremental updates are still out of scope; PDFs that rely on
- * those will yield an empty text result, matching the previous behaviour.
+ * xref) are still out of scope; PDFs that rely on those will yield an empty
+ * text result, matching the previous behaviour.
  */
 internal class PdfDocument internal constructor(
     val source: PdfByteSource,
     val xrefEntries: Map<PdfObjectId, PdfXrefEntry>,
     val trailer: PdfObject.Dictionary,
+    val startXref: Long,
 ) : AutoCloseable {
 
     private val resolvedCache = mutableMapOf<PdfObjectId, PdfObject>()
@@ -74,6 +75,7 @@ internal class PdfDocument internal constructor(
                 source = source,
                 xrefEntries = parsed.entries,
                 trailer = parsed.trailer,
+                startXref = startXref,
             )
         }
 
@@ -124,7 +126,9 @@ internal class PdfDocument internal constructor(
         private fun readClassicXrefAndTrailer(
             source: PdfByteSource,
             xrefOffset: Long,
+            visitedOffsets: MutableSet<Long> = mutableSetOf(),
         ): ParsedXref? {
+            if (!visitedOffsets.add(xrefOffset)) return null
             val firstByte = readByteAt(source, xrefOffset)
             if (firstByte != 'x'.code) {
                 // Likely a cross-reference stream (PDF 1.5+) starting with an
@@ -183,7 +187,18 @@ internal class PdfDocument internal constructor(
             val trailer = trailerParser.parseObject() as? PdfObject.Dictionary
                 ?: throw PdfParseException("expected trailer dictionary", dictionaryOffset)
 
-            return ParsedXref(entries, trailer)
+            val previousXrefOffset = (trailer.entries["Prev"] as? PdfObject.IntegerValue)?.value
+            if (previousXrefOffset == null) {
+                return ParsedXref(entries, trailer)
+            }
+
+            val previous = readClassicXrefAndTrailer(source, previousXrefOffset, visitedOffsets)
+                ?: return ParsedXref(entries, trailer)
+            val mergedEntries = linkedMapOf<PdfObjectId, PdfXrefEntry>()
+            mergedEntries.putAll(previous.entries)
+            mergedEntries.putAll(entries)
+            val mergedTrailer = PdfObject.Dictionary(previous.trailer.entries + trailer.entries)
+            return ParsedXref(mergedEntries, mergedTrailer)
         }
 
         private fun parseXrefEntry(line: LineReader.Line): PdfXrefEntry {

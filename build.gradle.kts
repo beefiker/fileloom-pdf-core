@@ -9,7 +9,7 @@ plugins {
 group = providers.gradleProperty("group").orNull ?: "dev.jaeyoung"
 version = providers.gradleProperty("version").orNull ?: "0.1.0-SNAPSHOT"
 
-description = "Fileloom PDF content/text extraction core library"
+description = "Fileloom PDF text, outline, and annotation core library"
 
 java {
     toolchain {
