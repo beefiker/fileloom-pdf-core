@@ -5,7 +5,7 @@ PDF text, outline, and annotation core library for Fileloom.
 Coordinates:
 
 ```kotlin
-implementation("dev.jaeyoung:fileloom-pdf-core:0.2.0")
+implementation("dev.jaeyoung:fileloom-pdf-core:0.2.2")
 ```
 
 ## Goal

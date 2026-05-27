@@ -33,7 +33,7 @@ internal fun serializePdfObject(value: PdfObject): String = when (value) {
     is PdfObject.IntegerValue -> value.value.toString()
     is PdfObject.RealValue -> formatPdfNumber(value.value)
     is PdfObject.Name -> "/${escapePdfName(value.value)}"
-    is PdfObject.StringValue -> value.bytes.joinToString(prefix = "<", postfix = ">") {
+    is PdfObject.StringValue -> value.bytes.joinToString(prefix = "<", postfix = ">", separator = "") {
         "%02X".format(it.toInt() and 0xff)
     }
     is PdfObject.ArrayValue -> value.items.joinToString(prefix = "[", postfix = "]", separator = " ") {

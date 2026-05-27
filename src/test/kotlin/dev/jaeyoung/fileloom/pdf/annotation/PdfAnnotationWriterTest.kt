@@ -37,6 +37,9 @@ class PdfAnnotationWriterTest {
         assertTrue(raw.contains("/Subtype /Highlight"), "expected a PDF highlight annotation object")
         assertTrue(raw.contains("/Subtype /Text"), "expected a PDF sticky note annotation object")
         assertTrue(raw.contains("/Annots"), "expected the target page to receive an /Annots array")
+        assertTrue(raw.contains("/MediaBox [0 0 612 792]"), "expected PDF arrays to use spaces")
+        assertTrue(!raw.contains("/Type /Page,"), "updated page dictionaries must not use comma separators")
+        assertTrue(!raw.contains("[0, 0, 612, 792]"), "updated page arrays must not use comma separators")
 
         val extractor = PdfTextExtractor.open(ByteArrayPdfByteSource(annotated))
         assertNotNull(extractor, "annotated incremental PDF should still be readable")
