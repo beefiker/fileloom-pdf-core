@@ -135,12 +135,19 @@ Maven Central bundle ZIP:
 ./gradlew publishToMavenCentralBundle
 ```
 
+For non-interactive signing, pass the GPG passphrase explicitly:
+
+```bash
+SIGNING_GNUPG_PASSPHRASE='your-passphrase' ./gradlew publishToMavenCentralBundle -Pversion=0.2.3
+```
+
 The task writes `build/maven-central-bundle/fileloom-pdf-core-<version>-maven-central-bundle.zip`.
 It stages the jar, sources jar, javadoc jar, and POM; creates `.md5` and `.sha1`
 checksums; and GPG-signs each artifact with `gpg --detach-sign --armor`.
-Set `-Psigning.gnupg.keyName=<KEY_ID>` to force a specific key, otherwise GPG's
-default secret key is used. This task only creates the ZIP; upload to
-Maven Central is a separate manual step.
+Set `-Psigning.gnupg.keyName=<KEY_ID>` to force a specific key, or
+`-Psigning.gnupg.passphrase=<PASSPHRASE>` instead of the environment variable
+above. Otherwise GPG's default secret key is used. This task only creates the
+ZIP; upload to Maven Central is a separate manual step.
 
 ## License
 
