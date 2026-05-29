@@ -39,6 +39,7 @@ internal class PdfPageWalker(private val document: PdfDocument) {
         val typeName = (dictionary.entries["Type"] as? PdfObject.Name)?.value
         if (typeName == "Page") {
             output += WalkedPage(
+                pageReference = reference,
                 pageDictionary = dictionary,
                 resources = resources,
             )
@@ -58,6 +59,7 @@ internal class PdfPageWalker(private val document: PdfDocument) {
 }
 
 internal data class WalkedPage(
+    val pageReference: PdfObject.Reference?,
     val pageDictionary: PdfObject.Dictionary,
     val resources: PdfObject.Dictionary?,
 )

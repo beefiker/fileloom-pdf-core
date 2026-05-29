@@ -37,6 +37,26 @@ internal object SyntheticPdfBuilder {
         singleLineTrailer = true,
     )
 
+    fun twoPageOutline(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Chapter 1) /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
+                "<< /Title (Chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                "<< /Title (Section 1.1) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
+            )
+        )
+    }
+
     private fun buildSimplePdf(
         content: String,
         includeEncryptStub: Boolean = false,
@@ -120,6 +140,48 @@ internal object SyntheticPdfBuilder {
         trailerBuilder.append("%%EOF\n")
         output.write(trailerBuilder.toString().toByteArray(StandardCharsets.ISO_8859_1))
 
+        return output.toByteArray()
+    }
+
+    private fun streamObject(content: String): String {
+        val compressed = deflate(content.toByteArray(StandardCharsets.ISO_8859_1))
+        return buildString {
+            append("<< /Length ${compressed.size} /Filter /FlateDecode >>\n")
+            append("stream\n")
+            append(compressed.toString(StandardCharsets.ISO_8859_1))
+            append("\nendstream")
+        }
+    }
+
+    private fun buildPdfObjects(objects: List<String>): ByteArray {
+        val output = ByteArrayOutputStream()
+        val offsets = mutableListOf<Long>()
+        output.write("%PDF-1.4\n%âãÏÓ\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        objects.forEachIndexed { index, body ->
+            offsets += output.size().toLong()
+            output.write("${index + 1} 0 obj\n$body\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        }
+
+        val xrefOffset = output.size().toLong()
+        val totalObjects = objects.size + 1
+        val xrefBuilder = StringBuilder()
+        xrefBuilder.append("xref\n")
+        xrefBuilder.append("0 $totalObjects\n")
+        xrefBuilder.append("0000000000 65535 f \n")
+        for (offset in offsets) {
+            xrefBuilder.append(offset.toString().padStart(10, '0')).append(" 00000 n \n")
+        }
+        output.write(xrefBuilder.toString().toByteArray(StandardCharsets.ISO_8859_1))
+
+        val trailer = buildString {
+            append("trailer\n")
+            append("<< /Size $totalObjects /Root 1 0 R >>\n")
+            append("startxref\n")
+            append("$xrefOffset\n")
+            append("%%EOF\n")
+        }
+        output.write(trailer.toByteArray(StandardCharsets.ISO_8859_1))
         return output.toByteArray()
     }
 

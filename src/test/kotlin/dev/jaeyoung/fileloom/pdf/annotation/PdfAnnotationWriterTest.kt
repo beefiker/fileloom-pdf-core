@@ -1,0 +1,47 @@
+package dev.jaeyoung.fileloom.pdf.annotation
+
+import dev.jaeyoung.fileloom.pdf.source.ByteArrayPdfByteSource
+import dev.jaeyoung.fileloom.pdf.text.PdfTextExtractor
+import dev.jaeyoung.fileloom.pdf.text.SyntheticPdfBuilder
+import java.nio.charset.StandardCharsets
+import kotlin.test.Test
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class PdfAnnotationWriterTest {
+
+    @Test
+    fun appendsHighlightAndStickyNoteAnnotationsWithoutBreakingReadablePdf() {
+        val original = SyntheticPdfBuilder.helloWorld()
+
+        val annotated = PdfAnnotationWriter.appendAnnotations(
+            pdfBytes = original,
+            annotations = listOf(
+                PdfAnnotation.Highlight(
+                    pageIndex = 0,
+                    rects = listOf(PdfAnnotationRect(left = 96f, top = 84f, right = 260f, bottom = 110f)),
+                    color = PdfAnnotationColor(red = 1f, green = 0.92f, blue = 0.23f),
+                    contents = "Important"
+                ),
+                PdfAnnotation.StickyNote(
+                    pageIndex = 0,
+                    x = 280f,
+                    y = 96f,
+                    color = PdfAnnotationColor(red = 0.2f, green = 0.56f, blue = 1f),
+                    contents = "Review this"
+                )
+            )
+        )
+
+        val raw = annotated.toString(StandardCharsets.ISO_8859_1)
+        assertTrue(raw.contains("/Subtype /Highlight"), "expected a PDF highlight annotation object")
+        assertTrue(raw.contains("/Subtype /Text"), "expected a PDF sticky note annotation object")
+        assertTrue(raw.contains("/Annots"), "expected the target page to receive an /Annots array")
+
+        val extractor = PdfTextExtractor.open(ByteArrayPdfByteSource(annotated))
+        assertNotNull(extractor, "annotated incremental PDF should still be readable")
+        extractor.use {
+            assertTrue("Hello, World!" in it.extractTextForPage(0))
+        }
+    }
+}
