@@ -14,6 +14,7 @@ class PublishingScriptTest {
         assertTrue(script.contains("--pinentry-mode"))
         assertTrue(script.contains("loopback"))
         assertTrue(script.contains("--passphrase"))
+        assertTrue(script.contains("Set SIGNING_GNUPG_PASSPHRASE"))
     }
 
     private fun findRepositoryFile(relativePath: String): File {

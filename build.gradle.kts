@@ -164,6 +164,11 @@ fun signWithGpg(file: java.io.File, keyName: String?, passphrase: String?) {
     val output = process.inputStream.bufferedReader().readText()
     val exit = process.waitFor()
     if (exit != 0) {
-        throw GradleException("gpg sign failed for ${file.name} (exit $exit):\n$output")
+        val passphraseHint = if (passphrase.isNullOrEmpty()) {
+            "\nSet SIGNING_GNUPG_PASSPHRASE or -Psigning.gnupg.passphrase for non-interactive Maven Central bundle signing."
+        } else {
+            ""
+        }
+        throw GradleException("gpg sign failed for ${file.name} (exit $exit):\n$output$passphraseHint")
     }
 }
