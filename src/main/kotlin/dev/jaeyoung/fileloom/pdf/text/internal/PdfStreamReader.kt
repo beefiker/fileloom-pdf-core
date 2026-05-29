@@ -28,6 +28,11 @@ internal object PdfStreamReader {
         return joinWithNewline(pieces)
     }
 
+    fun extractStream(
+        document: PdfDocument,
+        reference: PdfObject.Reference,
+    ): ByteArray? = extractSingleStream(document, reference)
+
     private fun collectStreamReferences(contents: PdfObject?): List<PdfObject.Reference>? {
         return when (contents) {
             null -> emptyList()

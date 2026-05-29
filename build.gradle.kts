@@ -87,6 +87,8 @@ tasks.register("stageMavenCentralBundle") {
         layout.buildDirectory.file("publications/mavenJava/pom-default.xml").get().asFile
     }
     val signingKey = providers.gradleProperty("signing.gnupg.keyName")
+    val signingPassphrase = providers.gradleProperty("signing.gnupg.passphrase")
+        .orElse(providers.environmentVariable("SIGNING_GNUPG_PASSPHRASE"))
     val stagingDir = mavenCentralStagingDir
     val artifactName = project.name
     val artifactVersion = project.version.toString()
@@ -110,7 +112,7 @@ tasks.register("stageMavenCentralBundle") {
             sourceFile.copyTo(destFile, overwrite = true)
             writeChecksum(destFile, "MD5", destFile.resolveSibling("$targetName.md5"))
             writeChecksum(destFile, "SHA-1", destFile.resolveSibling("$targetName.sha1"))
-            signWithGpg(destFile, signingKey.orNull)
+            signWithGpg(destFile, signingKey.orNull, signingPassphrase.orNull)
         }
 
         logger.lifecycle("Maven Central staging ready at ${targetDir.absolutePath}")
@@ -147,12 +149,15 @@ fun writeChecksum(file: java.io.File, algorithm: String, output: java.io.File) {
     output.writeText(hex)
 }
 
-fun signWithGpg(file: java.io.File, keyName: String?) {
+fun signWithGpg(file: java.io.File, keyName: String?, passphrase: String?) {
     val signature = file.resolveSibling("${file.name}.asc")
     if (signature.exists()) signature.delete()
     val cmd = mutableListOf("gpg", "--batch", "--yes", "--detach-sign", "--armor", "--output", signature.absolutePath)
     if (keyName != null) {
         cmd += listOf("--local-user", keyName)
+    }
+    if (!passphrase.isNullOrEmpty()) {
+        cmd += listOf("--pinentry-mode", "loopback", "--passphrase", passphrase)
     }
     cmd += file.absolutePath
     val process = ProcessBuilder(cmd).redirectErrorStream(true).start()

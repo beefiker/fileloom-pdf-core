@@ -18,8 +18,9 @@ internal object PdfFilters {
         streamDictionary: PdfObject.Dictionary,
         resolve: (PdfObject) -> PdfObject?,
     ): ByteArray? {
-        val filterEntry = streamDictionary.entries["Filter"]?.let { resolveIfNeeded(it, resolve) }
-        val filters = collectFilterNames(filterEntry) ?: return rawBytes
+        val rawFilterEntry = streamDictionary.entries["Filter"]
+        val filterEntry = rawFilterEntry?.let { resolveIfNeeded(it, resolve) } ?: return rawBytes
+        val filters = collectFilterNames(filterEntry, resolve) ?: return null
         val parmsEntry = streamDictionary.entries["DecodeParms"]?.let { resolveIfNeeded(it, resolve) }
         val parmsList = collectParms(parmsEntry, filters.size, resolve)
 
@@ -170,11 +171,16 @@ internal object PdfFilters {
         out.write(bytes, 0, emit)
     }
 
-    private fun collectFilterNames(value: PdfObject?): List<String>? {
+    private fun collectFilterNames(
+        value: PdfObject?,
+        resolve: (PdfObject) -> PdfObject?,
+    ): List<String>? {
         return when (value) {
             null -> null
             is PdfObject.Name -> listOf(value.value)
-            is PdfObject.ArrayValue -> value.items.mapNotNull { (it as? PdfObject.Name)?.value }
+            is PdfObject.ArrayValue -> value.items.map { item ->
+                (resolveIfNeeded(item, resolve) as? PdfObject.Name)?.value ?: return null
+            }
             else -> null
         }
     }
