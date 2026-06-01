@@ -23,4 +23,44 @@ class PdfOutlineExtractorTest {
             assertEquals(PdfTocEntry("Chapter 2", pageIndex = 1), toc[1])
         }
     }
+
+    @Test
+    fun resolvesOutlineNamedDestinationsFromLegacyDestsDictionary() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithLegacyNamedDestinations())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Named chapter 1", pageIndex = 0),
+                    PdfTocEntry("Named chapter 2", pageIndex = 1),
+                ),
+                toc
+            )
+        }
+    }
+
+    @Test
+    fun resolvesOutlineNamedDestinationsFromNameTree() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithNameTreeDestinations())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Name-tree chapter 1", pageIndex = 0),
+                    PdfTocEntry("Name-tree chapter 2", pageIndex = 1),
+                ),
+                toc
+            )
+        }
+    }
 }

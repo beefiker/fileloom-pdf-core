@@ -93,6 +93,8 @@ tasks.register("stageMavenCentralBundle") {
     val artifactName = project.name
     val artifactVersion = project.version.toString()
 
+    inputs.property("artifactPathSegment", artifactPathSegment)
+    inputs.property("artifactVersion", artifactVersion)
     outputs.dir(stagingDir)
 
     doLast {

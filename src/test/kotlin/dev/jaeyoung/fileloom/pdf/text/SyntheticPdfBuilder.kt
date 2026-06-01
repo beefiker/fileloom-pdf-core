@@ -57,6 +57,47 @@ internal object SyntheticPdfBuilder {
         )
     }
 
+    fun twoPageOutlineWithLegacyNamedDestinations(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R /Dests 11 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Named chapter 1) /Parent 8 0 R /Dest /ChapterOne /Next 10 0 R >>",
+                "<< /Title (Named chapter 2) /Parent 8 0 R /A << /S /GoTo /D /ChapterTwo >> /Prev 9 0 R >>",
+                "<< /ChapterOne [3 0 R /XYZ null null null] /ChapterTwo [6 0 R /Fit] >>",
+            )
+        )
+    }
+
+    fun twoPageOutlineWithNameTreeDestinations(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R /Names << /Dests 11 0 R >> >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Name-tree chapter 1) /Parent 8 0 R /Dest (ChapterOne) /Next 10 0 R >>",
+                "<< /Title (Name-tree chapter 2) /Parent 8 0 R /A << /S /GoTo /D (ChapterTwo) >> /Prev 9 0 R >>",
+                "<< /Names [(ChapterOne) [3 0 R /XYZ null null null] (ChapterTwo) 12 0 R] >>",
+                "<< /D [6 0 R /Fit] >>",
+            )
+        )
+    }
+
     private fun buildSimplePdf(
         content: String,
         includeEncryptStub: Boolean = false,
