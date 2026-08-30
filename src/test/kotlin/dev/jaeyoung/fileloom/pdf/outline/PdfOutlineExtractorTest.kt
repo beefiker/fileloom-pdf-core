@@ -1,11 +1,14 @@
 package dev.jaeyoung.fileloom.pdf.outline
 
 import dev.jaeyoung.fileloom.pdf.source.ByteArrayPdfByteSource
+import dev.jaeyoung.fileloom.pdf.source.PdfByteSource
 import dev.jaeyoung.fileloom.pdf.text.SyntheticPdfBuilder
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PdfOutlineExtractorTest {
 
@@ -67,6 +70,17 @@ class PdfOutlineExtractorTest {
         )
         assertNotNull(extractor)
 
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
+
+    @Test
+    fun skipsTrailingStartXrefTargetWhoseXrefTableCannotBeParsed() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingUnparseableXrefTarget())
+        )
+        assertNotNull(extractor)
         extractor.use {
             assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
         }
@@ -181,6 +195,23 @@ class PdfOutlineExtractorTest {
                 it.extractTableOfContents().map(PdfTocEntry::title),
             )
         }
+    }
+
+    @Test
+    fun oversizedXrefStreamLengthIsRejectedBeforeLargeRead() {
+        val source = TrackingPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithOversizedDeclaredXrefLength())
+
+        assertNull(PdfOutlineExtractor.open(source))
+        assertTrue(source.maxRequestedBytes.get() < 1024 * 1024)
+    }
+
+    @Test
+    fun corruptFlateXrefStreamIsRejectedInsteadOfUsingPartialOutput() {
+        assertNull(
+            PdfOutlineExtractor.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCorruptFlateXrefStream())
+            )
+        )
     }
 
     @Test
@@ -308,6 +339,24 @@ class PdfOutlineExtractorTest {
     }
 
     @Test
+    fun compressedObjectResolutionHonorsDeclaredObjectStreamIndex() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithMismatchedCompressedObjectIndex())
+        )
+        assertNotNull(extractor)
+        extractor.use { assertEquals(emptyList(), it.extractTableOfContents()) }
+    }
+
+    @Test
+    fun objectStreamHeaderMustMatchItsRegularXrefIdentity() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithMismatchedObjectStreamHeader())
+        )
+        assertNotNull(extractor)
+        extractor.use { assertEquals(emptyList(), it.extractTableOfContents()) }
+    }
+
+    @Test
     fun extractsOutlineFromFlateEncodedXrefAndObjectStreams() {
         val extractor = PdfOutlineExtractor.open(
             ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithFlateXrefAndObjectStreams())
@@ -379,5 +428,22 @@ class PdfOutlineExtractorTest {
                 toc
             )
         }
+    }
+
+    private class TrackingPdfByteSource(
+        private val bytes: ByteArray,
+    ) : PdfByteSource {
+        override val length: Long = bytes.size.toLong()
+        val maxRequestedBytes = AtomicInteger()
+
+        override fun read(position: Long, sink: ByteArray, offset: Int, byteCount: Int): Int {
+            maxRequestedBytes.accumulateAndGet(byteCount, ::maxOf)
+            if (position >= bytes.size) return -1
+            val count = minOf(byteCount, bytes.size - position.toInt())
+            bytes.copyInto(sink, offset, position.toInt(), position.toInt() + count)
+            return count
+        }
+
+        override fun close() = Unit
     }
 }
