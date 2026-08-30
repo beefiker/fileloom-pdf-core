@@ -17,6 +17,7 @@ data class PdfTocEntry(
 class PdfOutlineExtractor private constructor(
     private val document: PdfDocument,
     private val pageIndexes: Map<PdfObject.Reference, Int>,
+    private val pageCount: Int,
 ) : AutoCloseable {
 
     fun extractTableOfContents(): List<PdfTocEntry> {
@@ -40,7 +41,7 @@ class PdfOutlineExtractor private constructor(
             val reference = current as? PdfObject.Reference
             if (reference != null && !visited.add(reference)) break
             val dictionary = document.deref(current).asDictionary() ?: break
-            val title = (dictionary.entries["Title"] as? PdfObject.StringValue)
+            val title = (document.deref(dictionary.entries["Title"]) as? PdfObject.StringValue)
                 ?.decodePdfTextString()
                 ?.trim()
                 .orEmpty()
@@ -64,16 +65,36 @@ class PdfOutlineExtractor private constructor(
         dictionary: PdfObject.Dictionary,
         root: PdfObject.Dictionary,
     ): Int? {
-        val directDest = dictionary.entries["Dest"]
-        val actionDest = document.deref(dictionary.entries["A"])
-            .asDictionary()
-            ?.entries
-            ?.get("D")
-        return resolveDestinationObjectToPage(
-            value = directDest ?: actionDest,
-            root = root,
-            visitedNames = mutableSetOf(),
-        )
+        dictionary.entries["Dest"]?.let { directDest ->
+            return resolveDestinationObjectToPage(
+                value = directDest,
+                root = root,
+                visitedNames = mutableSetOf(),
+            )
+        }
+        val action = document.deref(dictionary.entries["A"]).asDictionary()
+            ?: return null
+        return resolveActionDestinationPage(action, root)
+    }
+
+    private fun resolveActionDestinationPage(
+        action: PdfObject.Dictionary,
+        root: PdfObject.Dictionary,
+    ): Int? {
+        val subtype = (document.deref(action.entries["S"]) as? PdfObject.Name)?.value
+        return when (subtype) {
+            null, "GoTo" -> resolveDestinationObjectToPage(
+                value = action.entries["D"],
+                root = root,
+                visitedNames = mutableSetOf(),
+            )
+            "Named" -> when (action.entries["N"].destinationName()) {
+                "FirstPage" -> coercePageIndex(0)
+                "LastPage" -> coercePageIndex(pageCount - 1)
+                else -> null
+            }
+            else -> null
+        }
     }
 
     private fun resolveDestinationObjectToPage(
@@ -104,10 +125,15 @@ class PdfOutlineExtractor private constructor(
         }
         val pageObject = destination.asArray()?.items?.firstOrNull() ?: destination
         return when (pageObject) {
-            is PdfObject.Reference -> pageIndexes[pageObject]
-            is PdfObject.IntegerValue -> pageObject.value.toInt().takeIf { it >= 0 }
+            is PdfObject.Reference -> pageIndexes[pageObject]?.let(::coercePageIndex)
+            is PdfObject.IntegerValue -> coercePageIndex(pageObject.value.toInt())
             else -> null
         }
+    }
+
+    private fun coercePageIndex(pageIndex: Int): Int? {
+        if (pageCount <= 0 || pageIndex < 0) return null
+        return pageIndex.coerceAtMost(pageCount - 1)
     }
 
     private fun resolveNamedDestination(
@@ -166,13 +192,13 @@ class PdfOutlineExtractor private constructor(
     companion object {
         fun open(source: PdfByteSource): PdfOutlineExtractor? {
             val document = PdfDocument.open(source) ?: return null
-            val pageIndexes = PdfPageWalker(document)
-                .collect()
+            val pages = PdfPageWalker(document).collect()
+            val pageIndexes = pages
                 .mapIndexedNotNull { index, page ->
                     page.pageReference?.let { it to index }
                 }
                 .toMap()
-            return PdfOutlineExtractor(document, pageIndexes)
+            return PdfOutlineExtractor(document, pageIndexes, pages.size)
         }
     }
 }

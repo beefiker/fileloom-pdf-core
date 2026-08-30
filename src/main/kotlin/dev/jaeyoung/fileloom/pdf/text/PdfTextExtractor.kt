@@ -22,7 +22,7 @@ import dev.jaeyoung.fileloom.pdf.text.internal.WalkedPage
  * }
  * ```
  *
- * Unsupported PDFs (encrypted, xref-stream-only, exotic filters) yield empty
+ * Unsupported PDFs (encrypted files, malformed structures, exotic filters) yield empty
  * strings rather than throwing. Callers should check for blank output and
  * surface a "no readable text" affordance to the user.
  */
@@ -51,8 +51,8 @@ class PdfTextExtractor private constructor(
     companion object {
         /**
          * Open a PDF for text extraction. Returns null if the file isn't a
-         * supported PDF variant (encrypted, malformed header, xref-stream-only,
-         * etc.). Never throws.
+         * supported PDF variant (encrypted, malformed header, unsupported stream
+         * filter, etc.). Never throws.
          */
         fun open(source: PdfByteSource): PdfTextExtractor? {
             val document = PdfDocument.open(source) ?: return null
