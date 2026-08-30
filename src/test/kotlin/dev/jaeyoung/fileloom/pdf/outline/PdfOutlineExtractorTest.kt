@@ -9,6 +9,23 @@ import kotlin.test.assertNotNull
 class PdfOutlineExtractorTest {
 
     @Test
+    fun opensOutlineWhenStartXrefIsBeyondLegacyTailWindow() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(
+                SyntheticPdfBuilder.twoPageOutlineWithTrailingBytes(8 * 1024)
+            )
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Chapter 1", "Chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
     fun extractsNestedOutlineTreeWithPageIndexes() {
         val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutline()))
         assertNotNull(extractor)

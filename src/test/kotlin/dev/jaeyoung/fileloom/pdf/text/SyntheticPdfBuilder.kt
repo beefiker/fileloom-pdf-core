@@ -57,6 +57,13 @@ internal object SyntheticPdfBuilder {
         )
     }
 
+    fun twoPageOutlineWithTrailingBytes(trailingByteCount: Int): ByteArray {
+        require(trailingByteCount >= 0)
+        return twoPageOutline() +
+            "\n% Fileloom outline compatibility tail\n".toByteArray(StandardCharsets.ISO_8859_1) +
+            ByteArray(trailingByteCount) { ' '.code.toByte() }
+    }
+
     fun twoPageOutlineWithIndirectTitles(): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
