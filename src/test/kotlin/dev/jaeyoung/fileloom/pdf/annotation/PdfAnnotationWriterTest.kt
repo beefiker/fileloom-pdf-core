@@ -44,4 +44,24 @@ class PdfAnnotationWriterTest {
             assertTrue("Hello, World!" in it.extractTextForPage(0))
         }
     }
+
+    @Test
+    fun allocatesAnnotationObjectsAfterHighCompressedObjectNumbers() {
+        val annotated = PdfAnnotationWriter.appendAnnotations(
+            pdfBytes = SyntheticPdfBuilder.onePagePdfWithHighCompressedObjectNumber(),
+            annotations = listOf(
+                PdfAnnotation.StickyNote(
+                    pageIndex = 0,
+                    x = 120f,
+                    y = 140f,
+                    color = PdfAnnotationColor(red = 1f, green = 0.8f, blue = 0.1f),
+                    contents = "High object number",
+                )
+            ),
+        )
+
+        val raw = annotated.toString(StandardCharsets.ISO_8859_1)
+        assertTrue(raw.contains("51 0 obj\n<< /Type /Annot"))
+        assertTrue(raw.contains("/Size 52"))
+    }
 }

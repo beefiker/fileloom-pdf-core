@@ -16,6 +16,13 @@ class PdfRenderPolicyTest {
     }
 
     @Test
+    fun previewFallbackWidthsNeverIncreaseTheRequestedAllocation() {
+        val widths = PdfRenderPolicy.fallbackWidths(PdfRenderPolicy.PREVIEW_RENDER_WIDTH)
+
+        assertEquals(listOf(PdfRenderPolicy.PREVIEW_RENDER_WIDTH), widths)
+    }
+
+    @Test
     fun safeRenderDimensionsRejectInvalidPageSizesAndCapHugePages() {
         assertNull(PdfRenderPolicy.safeRenderDimensions(1080, pageWidth = 0, pageHeight = 792))
 
