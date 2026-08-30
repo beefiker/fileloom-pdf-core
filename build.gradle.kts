@@ -1,3 +1,4 @@
+import java.nio.file.Files
 import java.security.MessageDigest
 
 plugins {
@@ -64,6 +65,22 @@ publishing {
 
 val mavenCentralBundleDir = layout.buildDirectory.dir("maven-central-bundle")
 val mavenCentralStagingDir = layout.buildDirectory.dir("maven-central-bundle/staging")
+val mavenCentralArtifactPath = "${project.group.toString().replace('.', '/')}/${project.name}/${project.version}"
+val mavenCentralTargetDir = mavenCentralStagingDir.map { it.dir(mavenCentralArtifactPath) }
+val mavenCentralArtifactName = project.name
+val mavenCentralArtifactVersion = project.version.toString()
+val mavenCentralJar = tasks.named<Jar>("jar").map { it.archiveFile.get().asFile }
+val mavenCentralSourcesJar = tasks.named<Jar>("sourcesJar").map { it.archiveFile.get().asFile }
+val mavenCentralJavadocJar = tasks.named<Jar>("javadocJar").map { it.archiveFile.get().asFile }
+val mavenCentralPom = tasks.named("generatePomFileForMavenJavaPublication").map {
+    layout.buildDirectory.file("publications/mavenJava/pom-default.xml").get().asFile
+}
+val mavenCentralSourceArtifacts = listOf(
+    mavenCentralJar to "$mavenCentralArtifactName-$mavenCentralArtifactVersion.jar",
+    mavenCentralSourcesJar to "$mavenCentralArtifactName-$mavenCentralArtifactVersion-sources.jar",
+    mavenCentralJavadocJar to "$mavenCentralArtifactName-$mavenCentralArtifactVersion-javadoc.jar",
+    mavenCentralPom to "$mavenCentralArtifactName-$mavenCentralArtifactVersion.pom",
+)
 
 /**
  * Stages the artifacts (jar/sources/javadoc/pom) into the layout Maven Central
@@ -73,43 +90,29 @@ val mavenCentralStagingDir = layout.buildDirectory.dir("maven-central-bundle/sta
  * GPG key is taken from `signing.gnupg.keyName` Gradle property if set,
  * otherwise gpg's default key is used.
  */
-tasks.register("stageMavenCentralBundle") {
+val stageMavenCentralBundle = tasks.register("stageMavenCentralBundle") {
     description = "Stages signed + checksummed artifacts for Maven Central under build/maven-central-bundle/staging/."
     group = "publishing"
 
     dependsOn("jar", "sourcesJar", "javadocJar", "generatePomFileForMavenJavaPublication")
 
-    val artifactPathSegment = "${project.group.toString().replace('.', '/')}/${project.name}/${project.version}"
-    val jarFileProvider = tasks.named<Jar>("jar").map { it.archiveFile.get().asFile }
-    val sourcesJarFileProvider = tasks.named<Jar>("sourcesJar").map { it.archiveFile.get().asFile }
-    val javadocJarFileProvider = tasks.named<Jar>("javadocJar").map { it.archiveFile.get().asFile }
-    val pomFileProvider = tasks.named("generatePomFileForMavenJavaPublication").map {
-        layout.buildDirectory.file("publications/mavenJava/pom-default.xml").get().asFile
-    }
     val signingKey = providers.gradleProperty("signing.gnupg.keyName")
     val signingPassphrase = providers.gradleProperty("signing.gnupg.passphrase")
         .orElse(providers.environmentVariable("SIGNING_GNUPG_PASSPHRASE"))
-    val stagingDir = mavenCentralStagingDir
-    val artifactName = project.name
-    val artifactVersion = project.version.toString()
-
-    inputs.property("artifactPathSegment", artifactPathSegment)
-    inputs.property("artifactVersion", artifactVersion)
-    outputs.dir(stagingDir)
+    inputs.property("artifactPathSegment", mavenCentralArtifactPath)
+    inputs.property("artifactVersion", mavenCentralArtifactVersion)
+    inputs.files(mavenCentralSourceArtifacts.map { it.first })
+        .withPropertyName("sourceArtifacts")
+        .withPathSensitivity(PathSensitivity.NONE)
+    outputs.dir(mavenCentralTargetDir)
 
     doLast {
-        val targetDir = stagingDir.get().asFile.resolve(artifactPathSegment)
+        val targetDir = mavenCentralTargetDir.get().asFile
         targetDir.deleteRecursively()
         targetDir.mkdirs()
 
-        val sources = listOf(
-            jarFileProvider.get() to "$artifactName-$artifactVersion.jar",
-            sourcesJarFileProvider.get() to "$artifactName-$artifactVersion-sources.jar",
-            javadocJarFileProvider.get() to "$artifactName-$artifactVersion-javadoc.jar",
-            pomFileProvider.get() to "$artifactName-$artifactVersion.pom",
-        )
-
-        sources.forEach { (sourceFile, targetName) ->
+        mavenCentralSourceArtifacts.forEach { (sourceFileProvider, targetName) ->
+            val sourceFile = sourceFileProvider.get()
             val destFile = targetDir.resolve(targetName)
             sourceFile.copyTo(destFile, overwrite = true)
             writeChecksum(destFile, "MD5", destFile.resolveSibling("$targetName.md5"))
@@ -121,13 +124,42 @@ tasks.register("stageMavenCentralBundle") {
     }
 }
 
+val verifyMavenCentralStaging = tasks.register("verifyMavenCentralStaging") {
+    description = "Fails when Maven Central staging does not exactly match the current local artifacts."
+    group = "verification"
+
+    dependsOn(stageMavenCentralBundle)
+
+    inputs.files(mavenCentralSourceArtifacts.map { it.first })
+        .withPropertyName("sourceArtifacts")
+        .withPathSensitivity(PathSensitivity.NONE)
+    inputs.dir(mavenCentralTargetDir)
+        .withPropertyName("stagedArtifacts")
+        .withPathSensitivity(PathSensitivity.NONE)
+
+    doLast {
+        val targetDir = mavenCentralTargetDir.get().asFile
+        mavenCentralSourceArtifacts.forEach { (sourceFileProvider, targetName) ->
+            val sourceFile = sourceFileProvider.get()
+            val stagedFile = targetDir.resolve(targetName)
+            if (!stagedFile.isFile || Files.mismatch(sourceFile.toPath(), stagedFile.toPath()) != -1L) {
+                throw GradleException(
+                    "Maven Central staging is stale for $targetName; rerun stageMavenCentralBundle."
+                )
+            }
+        }
+    }
+}
+
 tasks.register<Zip>("publishToMavenCentralBundle") {
     description = "Builds a Maven Central upload bundle (signed artifacts + checksums) under build/maven-central-bundle/."
     group = "publishing"
 
-    dependsOn("stageMavenCentralBundle")
+    dependsOn(verifyMavenCentralStaging)
 
-    from(mavenCentralStagingDir)
+    from(mavenCentralTargetDir) {
+        into(mavenCentralArtifactPath)
+    }
     archiveFileName.set("${project.name}-${project.version}-maven-central-bundle.zip")
     destinationDirectory.set(mavenCentralBundleDir)
 
