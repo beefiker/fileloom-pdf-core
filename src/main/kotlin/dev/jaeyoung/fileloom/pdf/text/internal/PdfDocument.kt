@@ -45,9 +45,16 @@ internal class PdfDocument internal constructor(
         if (inUse != null) {
             val lexer = PdfLexer(source, startPosition = inUse.offset)
             val parser = PdfObjectParser(lexer)
-            val indirect = runCatching { parser.parseIndirectObject() }.getOrNull()
-                ?: parseIndirectStreamHeader(source, inUse.offset)?.takeIf { it.id == id }?.dictionary
-                    ?.let { dictionary -> dev.jaeyoung.fileloom.pdf.document.PdfIndirectObject(id, dictionary) }
+        val indirect = runCatching {
+            parser.parseIndirectObject()
+        }.getOrNull() ?: runCatching {
+            parseIndirectStreamHeader(source, inUse.offset)
+                ?.takeIf { it.id == id }
+                ?.dictionary
+                ?.let { dictionary ->
+                    dev.jaeyoung.fileloom.pdf.document.PdfIndirectObject(id, dictionary)
+                }
+        }.getOrNull()
                 ?: return null
             if (indirect.id != id) return null
             resolvedCache[id] = indirect.value
@@ -66,14 +73,17 @@ internal class PdfDocument internal constructor(
         return if (value is PdfObject.Reference) resolve(value) else value
     }
 
-    internal fun nextAvailableObjectNumber(): Int? {
+    internal fun nextAvailableObjectNumber(requiredNewObjects: Int): Int? {
+        if (requiredNewObjects <= 0) return null
         val trailerSize = (trailer.entries["Size"] as? PdfObject.IntegerValue)?.value ?: 0L
         val regularNext = (xrefEntries.keys.maxOfOrNull(PdfObjectId::objectNumber)?.toLong() ?: 0L) + 1L
         val compressedNext = (
             compressedXrefEntries.keys.maxOfOrNull(PdfObjectId::objectNumber)?.toLong() ?: 0L
             ) + 1L
         return maxOf(1L, trailerSize, regularNext, compressedNext)
-            .takeIf { it <= Int.MAX_VALUE }
+            .takeIf { firstObjectNumber ->
+                firstObjectNumber + requiredNewObjects.toLong() <= Int.MAX_VALUE.toLong()
+            }
             ?.toInt()
     }
 
@@ -371,16 +381,16 @@ internal class PdfDocument internal constructor(
                     val field2 = readXrefStreamField(decoded, cursor, widths[2])
                     cursor += widths[2]
                     val objectNumber = firstObjectNumber + relativeIndex
-                    when (if (widths[0] == 0) 1 else typeValue.toInt()) {
-                        0 -> entries[PdfObjectId(objectNumber, field2.toInt())] = PdfXrefEntry.Free(
+                    when (if (widths[0] == 0) 1L else typeValue) {
+                        0L -> entries[PdfObjectId(objectNumber, field2.toInt())] = PdfXrefEntry.Free(
                             nextFreeObjectNumber = field1.toInt(),
                             generationNumber = field2.toInt(),
                         )
-                        1 -> entries[PdfObjectId(objectNumber, field2.toInt())] = PdfXrefEntry.InUse(
+                        1L -> entries[PdfObjectId(objectNumber, field2.toInt())] = PdfXrefEntry.InUse(
                             offset = field1,
                             generationNumber = field2.toInt(),
                         )
-                        2 -> compressedEntries[PdfObjectId(objectNumber, 0)] = CompressedXrefEntry(
+                        2L -> compressedEntries[PdfObjectId(objectNumber, 0)] = CompressedXrefEntry(
                             objectStreamNumber = field1.toInt(),
                             objectIndex = field2.toInt(),
                         )

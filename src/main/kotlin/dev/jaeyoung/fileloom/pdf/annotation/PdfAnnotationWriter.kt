@@ -69,7 +69,9 @@ object PdfAnnotationWriter {
                 .groupBy { it.pageIndex }
             if (annotationsByPage.isEmpty()) return pdfBytes
 
-            var nextObjectNumber = document.nextAvailableObjectNumber() ?: return pdfBytes
+            val requestedAnnotationObjects = annotationsByPage.values.sumOf(List<PdfAnnotation>::size)
+            var nextObjectNumber = document.nextAvailableObjectNumber(requestedAnnotationObjects)
+                ?: return pdfBytes
             val objectBodies = linkedMapOf<PdfObjectId, String>()
 
             annotationsByPage.forEach { (pageIndex, pageAnnotations) ->
