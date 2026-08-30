@@ -603,7 +603,12 @@ internal object SyntheticPdfBuilder {
         )
     )
 
-    fun twoPageOutlineWithXrefAndObjectStreams(): ByteArray {
+    fun twoPageOutlineWithOversizedDeclaredObjectStreamLength(): ByteArray =
+        twoPageOutlineWithXrefAndObjectStreams(objectStreamDeclaredLengthOverride = 1024 * 1024)
+
+    fun twoPageOutlineWithXrefAndObjectStreams(
+        objectStreamDeclaredLengthOverride: Int? = null,
+    ): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
         return buildPdfObjectsWithCompressedOutline(
@@ -621,7 +626,8 @@ internal object SyntheticPdfBuilder {
                 9 to "<< /Title (Compressed chapter 1) /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
                 10 to "<< /Title (Compressed chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
                 11 to "<< /Title (Compressed section) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
-            )
+            ),
+            objectStreamDeclaredLengthOverride = objectStreamDeclaredLengthOverride,
         )
     }
 
@@ -905,6 +911,7 @@ internal object SyntheticPdfBuilder {
         objectStreamPrelude: String = "",
         compressedIndexOverrides: Map<Int, Int> = emptyMap(),
         objectStreamHeaderNumber: Int = 12,
+        objectStreamDeclaredLengthOverride: Int? = null,
     ): ByteArray {
         val output = ByteArrayOutputStream()
         val objectOffsets = linkedMapOf<Int, Long>()
@@ -919,10 +926,11 @@ internal object SyntheticPdfBuilder {
         val objectStreamBytes = buildObjectStreamBytes(compressedObjects)
         val objectStreamPayload = if (flateObjectStream) deflate(objectStreamBytes.second) else objectStreamBytes.second
         val objectStreamFilter = if (flateObjectStream) " /Filter /FlateDecode" else ""
+        val objectStreamDeclaredLength = objectStreamDeclaredLengthOverride ?: objectStreamPayload.size
         objectOffsets[objectStreamNumber] = output.size().toLong()
         output.write("$objectStreamHeaderNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
         output.write(
-            "<< /Type /ObjStm /N ${compressedObjects.size} /First ${objectStreamBytes.first} /Length ${objectStreamPayload.size}$objectStreamFilter >>\n"
+            "<< /Type /ObjStm /N ${compressedObjects.size} /First ${objectStreamBytes.first} /Length $objectStreamDeclaredLength$objectStreamFilter >>\n"
                 .toByteArray(StandardCharsets.ISO_8859_1)
         )
         output.write(objectStreamPrelude.toByteArray(StandardCharsets.ISO_8859_1))

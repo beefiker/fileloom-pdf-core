@@ -113,7 +113,12 @@ internal class PdfDocument internal constructor(
             ?: return null
         val first = (dictionary.entries["First"] as? PdfObject.IntegerValue)?.value?.toLong()?.coerceAtLeast(0)
             ?: return null
-        val stream = PdfStreamReader.extractStream(this, reference) ?: return null
+        val stream = PdfStreamReader.extractStream(
+            document = this,
+            reference = reference,
+            maxRawBytes = MAX_OBJECT_STREAM_BYTES,
+            maxDecodedBytes = MAX_OBJECT_STREAM_BYTES,
+        ) ?: return null
         val streamSource = ByteArrayPdfByteSource(stream)
         val headerParser = PdfObjectParser(PdfLexer(streamSource))
         val objectHeaders = mutableListOf<Pair<Int, Long>>()
@@ -615,6 +620,7 @@ internal class PdfDocument internal constructor(
         private const val STARTXREF_WINDOW_BYTES = 64 * 1024
         private const val STARTXREF_WINDOW_OVERLAP_BYTES = 128
         private const val MAX_STARTXREF_TAIL_BYTES = 1024 * 1024
+        private const val MAX_OBJECT_STREAM_BYTES = 64 * 1024 * 1024
         private const val MAX_XREF_STREAM_BYTES = 64 * 1024 * 1024
         private const val STARTXREF_MARKER = "startxref"
 

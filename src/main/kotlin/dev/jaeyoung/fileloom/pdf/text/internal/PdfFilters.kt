@@ -13,6 +13,8 @@ import java.util.zip.Inflater
  */
 internal object PdfFilters {
 
+    private const val MAX_INTERMEDIATE_FILTER_BYTES = 64 * 1024 * 1024
+
     fun decode(
         rawBytes: ByteArray,
         streamDictionary: PdfObject.Dictionary,
@@ -31,8 +33,13 @@ internal object PdfFilters {
         var current = rawBytes
         for ((index, filter) in filters.withIndex()) {
             val parms = parmsList.getOrNull(index)
-            current = applyFilter(filter, current, parms, strictFlate, maxDecodedBytes) ?: return null
-            if (maxDecodedBytes != null && current.size > maxDecodedBytes) return null
+            val outputLimit = if (index == filters.lastIndex) {
+                maxDecodedBytes
+            } else {
+                maxDecodedBytes?.let { MAX_INTERMEDIATE_FILTER_BYTES }
+            }
+            current = applyFilter(filter, current, parms, strictFlate, outputLimit) ?: return null
+            if (outputLimit != null && current.size > outputLimit) return null
         }
         return current
     }
@@ -153,21 +160,26 @@ internal object PdfFilters {
         val sampleMask = (1 shl bitsPerComponent) - 1
         val decoded = ByteArray(bytes.size)
         for (rowStart in bytes.indices step rowBytes) {
-            val samples = IntArray(sampleCount)
             for (sampleIndex in 0 until sampleCount) {
-                samples[sampleIndex] = readBits(
+                val bitOffset = rowStart * 8 + sampleIndex * bitsPerComponent
+                var sample = readBits(
                     bytes = bytes,
-                    bitOffset = rowStart * 8 + sampleIndex * bitsPerComponent,
+                    bitOffset = bitOffset,
                     bitCount = bitsPerComponent,
                 )
                 if (sampleIndex >= colors) {
-                    samples[sampleIndex] = (samples[sampleIndex] + samples[sampleIndex - colors]) and sampleMask
+                    val leftSample = readBits(
+                        bytes = decoded,
+                        bitOffset = rowStart * 8 + (sampleIndex - colors) * bitsPerComponent,
+                        bitCount = bitsPerComponent,
+                    )
+                    sample = (sample + leftSample) and sampleMask
                 }
                 writeBits(
                     bytes = decoded,
-                    bitOffset = rowStart * 8 + sampleIndex * bitsPerComponent,
+                    bitOffset = bitOffset,
                     bitCount = bitsPerComponent,
-                    value = samples[sampleIndex],
+                    value = sample,
                 )
             }
         }

@@ -31,7 +31,9 @@ internal object PdfStreamReader {
     fun extractStream(
         document: PdfDocument,
         reference: PdfObject.Reference,
-    ): ByteArray? = extractSingleStream(document, reference)
+        maxRawBytes: Int? = null,
+        maxDecodedBytes: Int? = null,
+    ): ByteArray? = extractSingleStream(document, reference, maxRawBytes, maxDecodedBytes)
 
     private fun collectStreamReferences(contents: PdfObject?): List<PdfObject.Reference>? {
         return when (contents) {
@@ -45,7 +47,11 @@ internal object PdfStreamReader {
     private fun extractSingleStream(
         document: PdfDocument,
         reference: PdfObject.Reference,
+        maxRawBytes: Int? = null,
+        maxDecodedBytes: Int? = null,
     ): ByteArray? {
+        if (maxRawBytes != null && maxRawBytes < 0) return null
+        if (maxDecodedBytes != null && maxDecodedBytes < 0) return null
         val id = PdfObjectId(reference.objectNumber, reference.generationNumber)
         val xrefEntry = document.xrefEntries[id] as? PdfXrefEntry.InUse ?: return null
 
@@ -70,11 +76,21 @@ internal object PdfStreamReader {
 
         val endOffsetInclusive = locateDictionaryEnd(source, first.offset)
         val payloadStart = locateStreamPayloadStart(source, endOffsetInclusive) ?: return null
+        val availablePayloadBytes = source.length - payloadStart
+        if (
+            (maxRawBytes != null && length > maxRawBytes) ||
+            availablePayloadBytes < 0L ||
+            length.toLong() > availablePayloadBytes
+        ) {
+            return null
+        }
         val rawBytes = readBytes(source, payloadStart, length)
+        if (rawBytes.size != length) return null
 
         return PdfFilters.decode(
             rawBytes = rawBytes,
             streamDictionary = dictionary,
+            maxDecodedBytes = maxDecodedBytes,
             resolve = resolveAny(document),
         )
     }
