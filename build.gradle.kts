@@ -101,10 +101,13 @@ val stageMavenCentralBundle = tasks.register("stageMavenCentralBundle") {
         .orElse(providers.environmentVariable("SIGNING_GNUPG_PASSPHRASE"))
     inputs.property("artifactPathSegment", mavenCentralArtifactPath)
     inputs.property("artifactVersion", mavenCentralArtifactVersion)
+    inputs.property("signingKey", signingKey.orElse("<gpg-default>"))
     inputs.files(mavenCentralSourceArtifacts.map { it.first })
         .withPropertyName("sourceArtifacts")
         .withPathSensitivity(PathSensitivity.NONE)
     outputs.dir(mavenCentralTargetDir)
+    // The selected default key can change outside Gradle's modeled inputs.
+    outputs.upToDateWhen { false }
 
     doLast {
         val targetDir = mavenCentralTargetDir.get().asFile
