@@ -47,8 +47,13 @@ object PdfRenderPolicy {
         width = width.coerceAtMost(maxWidthByPixels).coerceAtMost(maxWidthByHeight)
         if (width <= 0) return null
 
-        val height = (width * aspectInv).roundToInt().coerceAtLeast(1)
+        var height = (width * aspectInv).roundToInt().coerceAtLeast(1)
+        while (width > 1 && width.toLong() * height.toLong() > MAX_RENDER_PIXELS) {
+            width -= 1
+            height = (width * aspectInv).roundToInt().coerceAtLeast(1)
+        }
         if (height > MAX_RENDER_DIMENSION) return null
+        if (width.toLong() * height.toLong() > MAX_RENDER_PIXELS) return null
         return width to height
     }
 

@@ -164,6 +164,7 @@ internal class PdfDocument internal constructor(
         private fun findStartXref(source: PdfByteSource): Long {
             val lowerBound = (source.length - MAX_STARTXREF_TAIL_BYTES).coerceAtLeast(0L)
             var logicalEnd = source.length
+            var greatestValidOffset: Long? = null
             while (logicalEnd > lowerBound) {
                 val windowStart = (logicalEnd - STARTXREF_WINDOW_BYTES).coerceAtLeast(lowerBound)
                 val readEnd = (logicalEnd + STARTXREF_WINDOW_OVERLAP_BYTES)
@@ -173,19 +174,22 @@ internal class PdfDocument internal constructor(
                     start = windowStart,
                     count = (readEnd - windowStart).toInt(),
                 ).toString(StandardCharsets.ISO_8859_1)
-                parseLastValidStartXref(
+                parseGreatestValidStartXref(
                     source = source,
                     window = window,
                     windowStart = windowStart,
                     logicalEnd = logicalEnd,
                     sourceLength = source.length,
-                )?.let { return it }
+                )?.let { candidate ->
+                    greatestValidOffset = maxOf(greatestValidOffset ?: candidate, candidate)
+                }
                 logicalEnd = windowStart
             }
-            throw PdfParseException("missing startxref", offset = lowerBound)
+            return greatestValidOffset
+                ?: throw PdfParseException("missing startxref", offset = lowerBound)
         }
 
-        private fun parseLastValidStartXref(
+        private fun parseGreatestValidStartXref(
             source: PdfByteSource,
             window: String,
             windowStart: Long,
@@ -193,9 +197,10 @@ internal class PdfDocument internal constructor(
             sourceLength: Long,
         ): Long? {
             var searchFrom = window.lastIndex
+            var greatestValidOffset: Long? = null
             while (searchFrom >= 0) {
                 val markerIndex = window.lastIndexOf(STARTXREF_MARKER, startIndex = searchFrom)
-                if (markerIndex < 0) return null
+                if (markerIndex < 0) return greatestValidOffset
                 val absoluteMarkerOffset = windowStart + markerIndex
                 if (absoluteMarkerOffset < logicalEnd) {
                     var index = markerIndex + STARTXREF_MARKER.length
@@ -209,13 +214,13 @@ internal class PdfDocument internal constructor(
                             offset in 0 until sourceLength &&
                             isXrefStructureAt(source, offset)
                         ) {
-                            return offset
+                            greatestValidOffset = maxOf(greatestValidOffset ?: offset, offset)
                         }
                     }
                 }
                 searchFrom = markerIndex - 1
             }
-            return null
+            return greatestValidOffset
         }
 
         private fun isXrefStructureAt(source: PdfByteSource, offset: Long): Boolean = runCatching {
