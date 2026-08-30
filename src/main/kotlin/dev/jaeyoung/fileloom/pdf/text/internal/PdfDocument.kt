@@ -151,24 +151,52 @@ internal class PdfDocument internal constructor(
         }
 
         private fun findStartXref(source: PdfByteSource): Long {
-            val tailLength = minOf(4096, source.length.toInt())
-            val tailStart = source.length - tailLength
-            val tail = readSlice(source, start = tailStart, count = tailLength)
-                .toString(StandardCharsets.ISO_8859_1)
-
-            val markerIndex = tail.lastIndexOf("startxref")
-            if (markerIndex < 0) {
-                throw PdfParseException("missing startxref", offset = tailStart)
+            val lowerBound = (source.length - MAX_STARTXREF_TAIL_BYTES).coerceAtLeast(0L)
+            var logicalEnd = source.length
+            while (logicalEnd > lowerBound) {
+                val windowStart = (logicalEnd - STARTXREF_WINDOW_BYTES).coerceAtLeast(lowerBound)
+                val readEnd = (logicalEnd + STARTXREF_WINDOW_OVERLAP_BYTES)
+                    .coerceAtMost(source.length)
+                val window = readSlice(
+                    source = source,
+                    start = windowStart,
+                    count = (readEnd - windowStart).toInt(),
+                ).toString(StandardCharsets.ISO_8859_1)
+                parseLastValidStartXref(
+                    window = window,
+                    windowStart = windowStart,
+                    logicalEnd = logicalEnd,
+                    sourceLength = source.length,
+                )?.let { return it }
+                logicalEnd = windowStart
             }
+            throw PdfParseException("missing startxref", offset = lowerBound)
+        }
 
-            var index = markerIndex + "startxref".length
-            while (index < tail.length && tail[index].isWhitespace()) index += 1
-            val numberStart = index
-            while (index < tail.length && tail[index].isDigit()) index += 1
-            if (numberStart == index) {
-                throw PdfParseException("missing startxref offset", offset = tailStart + numberStart)
+        private fun parseLastValidStartXref(
+            window: String,
+            windowStart: Long,
+            logicalEnd: Long,
+            sourceLength: Long,
+        ): Long? {
+            var searchFrom = window.lastIndex
+            while (searchFrom >= 0) {
+                val markerIndex = window.lastIndexOf(STARTXREF_MARKER, startIndex = searchFrom)
+                if (markerIndex < 0) return null
+                val absoluteMarkerOffset = windowStart + markerIndex
+                if (absoluteMarkerOffset < logicalEnd) {
+                    var index = markerIndex + STARTXREF_MARKER.length
+                    while (index < window.length && window[index].isWhitespace()) index += 1
+                    val numberStart = index
+                    while (index < window.length && window[index].isDigit()) index += 1
+                    if (numberStart < index) {
+                        val offset = window.substring(numberStart, index).toLongOrNull()
+                        if (offset != null && offset in 0 until sourceLength) return offset
+                    }
+                }
+                searchFrom = markerIndex - 1
             }
-            return tail.substring(numberStart, index).toLong()
+            return null
         }
 
         private fun readXrefAndTrailer(
@@ -487,6 +515,10 @@ internal class PdfDocument internal constructor(
             takeIf { it >= 0 && it <= Int.MAX_VALUE }?.toInt() ?: 0
 
         private val WHITESPACE_REGEX = Regex("\\s+")
+        private const val STARTXREF_WINDOW_BYTES = 64 * 1024
+        private const val STARTXREF_WINDOW_OVERLAP_BYTES = 128
+        private const val MAX_STARTXREF_TAIL_BYTES = 1024 * 1024
+        private const val STARTXREF_MARKER = "startxref"
 
         private data class ParsedXref(
             val entries: Map<PdfObjectId, PdfXrefEntry>,

@@ -5,6 +5,7 @@ import dev.jaeyoung.fileloom.pdf.text.SyntheticPdfBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class PdfOutlineExtractorTest {
 
@@ -23,6 +24,28 @@ class PdfOutlineExtractorTest {
                 it.extractTableOfContents().map(PdfTocEntry::title),
             )
         }
+    }
+
+    @Test
+    fun findsStartXrefWhenMarkerCrossesAWindowBoundary() {
+        val bytes = SyntheticPdfBuilder.twoPageOutlineWithStartXrefDistanceFromEof(
+            64 * 1024 + 4
+        )
+        val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(bytes))
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(2, it.extractTableOfContents().size)
+        }
+    }
+
+    @Test
+    fun refusesToScanBeyondOneMiBTailBudget() {
+        val bytes = SyntheticPdfBuilder.twoPageOutlineWithStartXrefDistanceFromEof(
+            1024 * 1024 + 256
+        )
+
+        assertNull(PdfOutlineExtractor.open(ByteArrayPdfByteSource(bytes)))
     }
 
     @Test

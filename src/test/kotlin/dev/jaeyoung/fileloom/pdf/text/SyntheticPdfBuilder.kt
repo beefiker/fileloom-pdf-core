@@ -64,6 +64,15 @@ internal object SyntheticPdfBuilder {
             ByteArray(trailingByteCount) { ' '.code.toByte() }
     }
 
+    fun twoPageOutlineWithStartXrefDistanceFromEof(distance: Int): ByteArray {
+        val original = twoPageOutline()
+        val marker = original.toString(StandardCharsets.ISO_8859_1).lastIndexOf("startxref")
+        require(marker >= 0)
+        val currentDistance = original.size - marker
+        require(distance >= currentDistance)
+        return original + ByteArray(distance - currentDistance) { ' '.code.toByte() }
+    }
+
     fun twoPageOutlineWithIndirectTitles(): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
