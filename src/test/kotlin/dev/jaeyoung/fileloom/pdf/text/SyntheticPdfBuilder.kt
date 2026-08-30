@@ -608,7 +608,7 @@ internal object SyntheticPdfBuilder {
                 10 to "<< /Title (Other slot chapter) /Parent 8 0 R /Dest [3 0 R /Fit] /Prev 9 0 R >>",
                 11 to "<< /Unused true >>",
             ),
-            compressedIndexOverrides = mapOf(9 to 1),
+            compressedIndexOverrides = mapOf(9 to 2),
         )
 
     fun twoPageOutlineWithMismatchedObjectStreamHeader(): ByteArray =

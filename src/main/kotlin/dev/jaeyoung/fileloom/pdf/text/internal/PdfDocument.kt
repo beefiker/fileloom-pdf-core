@@ -36,7 +36,7 @@ internal class PdfDocument internal constructor(
 ) : AutoCloseable {
 
     private val resolvedCache = mutableMapOf<PdfObjectId, PdfObject>()
-    private val objectStreamCache = mutableMapOf<Int, Map<Int, PdfObject>>()
+    private val objectStreamCache = mutableMapOf<Int, List<Pair<Int, PdfObject>>>()
 
     fun resolve(reference: PdfObject.Reference): PdfObject? {
         val id = PdfObjectId(reference.objectNumber, reference.generationNumber)
@@ -61,7 +61,11 @@ internal class PdfDocument internal constructor(
             return indirect.value
         }
         val compressed = compressedXrefEntries[id] ?: return null
-        val value = loadCompressedObject(compressed.objectStreamNumber, reference.objectNumber)
+        val value = loadCompressedObject(
+            objectStreamNumber = compressed.objectStreamNumber,
+            objectIndex = compressed.objectIndex,
+            objectNumber = reference.objectNumber,
+        )
             ?: return null
         resolvedCache[id] = value
         return value
@@ -89,16 +93,18 @@ internal class PdfDocument internal constructor(
 
     private fun loadCompressedObject(
         objectStreamNumber: Int,
+        objectIndex: Int,
         objectNumber: Int,
     ): PdfObject? {
-        val cached = objectStreamCache[objectStreamNumber]
-        if (cached != null) return cached[objectNumber]
-        val parsed = parseObjectStream(objectStreamNumber).orEmpty()
-        objectStreamCache[objectStreamNumber] = parsed
-        return parsed[objectNumber]
+        val parsed = objectStreamCache[objectStreamNumber]
+            ?: parseObjectStream(objectStreamNumber).orEmpty().also { parsed ->
+                objectStreamCache[objectStreamNumber] = parsed
+            }
+        val selected = parsed.getOrNull(objectIndex) ?: return null
+        return selected.second.takeIf { selected.first == objectNumber }
     }
 
-    private fun parseObjectStream(objectStreamNumber: Int): Map<Int, PdfObject>? {
+    private fun parseObjectStream(objectStreamNumber: Int): List<Pair<Int, PdfObject>>? {
         val reference = PdfObject.Reference(objectStreamNumber, 0)
         val dictionary = parseIndirectObjectDictionary(reference) ?: return null
         val type = (dictionary.entries["Type"] as? PdfObject.Name)?.value
@@ -121,18 +127,20 @@ internal class PdfDocument internal constructor(
                 ?: return null
             objectHeaders += nestedObjectNumber to nestedObjectOffset
         }
-        return objectHeaders.mapNotNull { (nestedObjectNumber, nestedObjectOffset) ->
+        return objectHeaders.map { (nestedObjectNumber, nestedObjectOffset) ->
             val objectOffset = first + nestedObjectOffset
             val parser = PdfObjectParser(PdfLexer(ByteArrayPdfByteSource(stream), startPosition = objectOffset))
-            val value = runCatching { parser.parseObject() }.getOrNull() ?: return@mapNotNull null
+            val value = runCatching { parser.parseObject() }.getOrNull() ?: return null
             nestedObjectNumber to value
-        }.toMap()
+        }
     }
 
     private fun parseIndirectObjectDictionary(reference: PdfObject.Reference): PdfObject.Dictionary? {
         val id = PdfObjectId(reference.objectNumber, reference.generationNumber)
         val entry = xrefEntries[id] as? PdfXrefEntry.InUse ?: return null
-        return parseIndirectStreamHeader(source, entry.offset)?.dictionary
+        return parseIndirectStreamHeader(source, entry.offset)
+            ?.takeIf { it.id == id }
+            ?.dictionary
     }
 
     override fun close() {
@@ -222,7 +230,7 @@ internal class PdfDocument internal constructor(
                         if (
                             offset != null &&
                             offset in 0 until sourceLength &&
-                            isXrefStructureAt(source, offset)
+                            isParseableXrefAt(source, offset)
                         ) {
                             greatestValidOffset = maxOf(greatestValidOffset ?: offset, offset)
                         }
@@ -233,17 +241,8 @@ internal class PdfDocument internal constructor(
             return greatestValidOffset
         }
 
-        private fun isXrefStructureAt(source: PdfByteSource, offset: Long): Boolean = runCatching {
-            if (readByteAt(source, offset) == 'x'.code) {
-                val remaining = source.length - offset
-                remaining >= 5L &&
-                    readSlice(source, offset, 4).contentEquals("xref".toByteArray()) &&
-                    readByteAt(source, offset + 4L).isPdfWhitespace()
-            } else {
-                val header = parseIndirectStreamHeader(source, offset) ?: return@runCatching false
-                (header.dictionary.entries["Type"] as? PdfObject.Name)?.value == "XRef"
-            }
-        }.getOrDefault(false)
+        private fun isParseableXrefAt(source: PdfByteSource, offset: Long): Boolean =
+            runCatching { readXrefAndTrailer(source, offset) != null }.getOrDefault(false)
 
         private fun readXrefAndTrailer(
             source: PdfByteSource,
@@ -363,8 +362,16 @@ internal class PdfDocument internal constructor(
             val indexes = trailer.entries["Index"].asXrefStreamIndexPairs() ?: listOf(0 to size)
             val length = (trailer.entries["Length"] as? PdfObject.IntegerValue)?.value?.toInt()?.coerceAtLeast(0)
                 ?: return null
+            val availablePayloadBytes = source.length - header.streamPayloadStart
+            if (
+                length > MAX_XREF_STREAM_BYTES ||
+                availablePayloadBytes < 0L ||
+                length.toLong() > availablePayloadBytes
+            ) {
+                return null
+            }
             val rawBytes = readSlice(source, header.streamPayloadStart, length)
-            val decoded = PdfFilters.decode(rawBytes, trailer) { null } ?: return null
+            val decoded = PdfFilters.decode(rawBytes, trailer, strictFlate = true) { null } ?: return null
 
             val entries = linkedMapOf<PdfObjectId, PdfXrefEntry>()
             val compressedEntries = linkedMapOf<PdfObjectId, CompressedXrefEntry>()
@@ -583,6 +590,7 @@ internal class PdfDocument internal constructor(
         private const val STARTXREF_WINDOW_BYTES = 64 * 1024
         private const val STARTXREF_WINDOW_OVERLAP_BYTES = 128
         private const val MAX_STARTXREF_TAIL_BYTES = 1024 * 1024
+        private const val MAX_XREF_STREAM_BYTES = 64 * 1024 * 1024
         private const val STARTXREF_MARKER = "startxref"
 
         private data class ParsedXref(

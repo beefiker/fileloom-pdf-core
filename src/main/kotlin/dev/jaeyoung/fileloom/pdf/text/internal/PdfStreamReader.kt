@@ -52,8 +52,14 @@ internal object PdfStreamReader {
         val source = document.source
         val lexer = PdfLexer(source, startPosition = xrefEntry.offset)
 
-        if (lexer.nextToken() !is PdfToken.IntegerNumber) return null
-        if (lexer.nextToken() !is PdfToken.IntegerNumber) return null
+        val objectNumber = lexer.nextToken() as? PdfToken.IntegerNumber ?: return null
+        val generationNumber = lexer.nextToken() as? PdfToken.IntegerNumber ?: return null
+        if (
+            objectNumber.value != reference.objectNumber.toLong() ||
+            generationNumber.value != reference.generationNumber.toLong()
+        ) {
+            return null
+        }
         val objKeyword = lexer.nextToken() as? PdfToken.Keyword ?: return null
         if (objKeyword.value != "obj") return null
 
@@ -66,7 +72,11 @@ internal object PdfStreamReader {
         val payloadStart = locateStreamPayloadStart(source, endOffsetInclusive) ?: return null
         val rawBytes = readBytes(source, payloadStart, length)
 
-        return PdfFilters.decode(rawBytes, dictionary, resolveAny(document))
+        return PdfFilters.decode(
+            rawBytes = rawBytes,
+            streamDictionary = dictionary,
+            resolve = resolveAny(document),
+        )
     }
 
     private fun resolveAny(document: PdfDocument): (PdfObject) -> PdfObject? = { value ->

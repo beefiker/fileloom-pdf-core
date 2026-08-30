@@ -16,6 +16,7 @@ internal object PdfFilters {
     fun decode(
         rawBytes: ByteArray,
         streamDictionary: PdfObject.Dictionary,
+        strictFlate: Boolean = false,
         resolve: (PdfObject) -> PdfObject?,
     ): ByteArray? {
         val rawFilterEntry = streamDictionary.entries["Filter"]
@@ -27,7 +28,7 @@ internal object PdfFilters {
         var current = rawBytes
         for ((index, filter) in filters.withIndex()) {
             val parms = parmsList.getOrNull(index)
-            current = applyFilter(filter, current, parms) ?: return null
+            current = applyFilter(filter, current, parms, strictFlate) ?: return null
         }
         return current
     }
@@ -36,18 +37,20 @@ internal object PdfFilters {
         filter: String,
         bytes: ByteArray,
         parms: PdfObject.Dictionary?,
+        strictFlate: Boolean,
     ): ByteArray? = when (filter) {
-        "FlateDecode", "Fl" -> applyPredictor(flateDecode(bytes), parms)
+        "FlateDecode", "Fl" -> flateDecode(bytes, strictFlate)?.let { applyPredictor(it, parms) }
         "ASCIIHexDecode", "AHx" -> asciiHexDecode(bytes)
         "ASCII85Decode", "A85" -> ascii85Decode(bytes)
         else -> null // LZWDecode, RunLengthDecode, CCITTFaxDecode, JBIG2Decode, DCTDecode, JPXDecode
     }
 
-    private fun flateDecode(bytes: ByteArray): ByteArray {
+    private fun flateDecode(bytes: ByteArray, strict: Boolean): ByteArray? {
         val inflater = Inflater()
         inflater.setInput(bytes)
         val output = ByteArrayOutputStream(bytes.size * 4)
         val buffer = ByteArray(4096)
+        var failed = false
         try {
             while (!inflater.finished()) {
                 val n = inflater.inflate(buffer)
@@ -58,9 +61,11 @@ internal object PdfFilters {
                 output.write(buffer, 0, n)
             }
         } catch (_: java.util.zip.DataFormatException) {
-            // Tolerate trailing garbage some encoders emit; return what we have.
+            failed = true
         } finally {
+            val complete = inflater.finished()
             inflater.end()
+            if (strict && (failed || !complete)) return null
         }
         return output.toByteArray()
     }
@@ -81,7 +86,7 @@ internal object PdfFilters {
         val rowBytes = ((rowBits + 7L) / 8L).takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return null
         val bytesPerPixel = ((pixelBits + 7L) / 8L).takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return null
         return when (predictor) {
-            2 -> decodeTiffPredictor(bytes, rowBytes, bytesPerPixel, bitsPerComponent)
+            2 -> decodeTiffPredictor(bytes, rowBytes, colors, columns, bitsPerComponent)
             in 10..15 -> decodePngPredictor(bytes, rowBytes, bytesPerPixel, predictor)
             else -> null
         }
@@ -90,23 +95,60 @@ internal object PdfFilters {
     private fun decodeTiffPredictor(
         bytes: ByteArray,
         rowBytes: Int,
-        bytesPerPixel: Int,
+        colors: Int,
+        columns: Int,
         bitsPerComponent: Int,
     ): ByteArray? {
-        if (bitsPerComponent != 8 || bytes.size % rowBytes != 0) return null
-        val decoded = bytes.copyOf()
-        var rowStart = 0
-        while (rowStart < decoded.size) {
-            for (column in bytesPerPixel until rowBytes) {
-                val index = rowStart + column
-                decoded[index] = (
-                    (decoded[index].toInt() and 0xff) +
-                        (decoded[index - bytesPerPixel].toInt() and 0xff)
-                    ).toByte()
+        if (bitsPerComponent !in setOf(1, 2, 4, 8, 16) || bytes.size % rowBytes != 0) return null
+        val samplesPerRow = colors.toLong() * columns.toLong()
+        if (samplesPerRow !in 1..Int.MAX_VALUE) return null
+        val sampleCount = samplesPerRow.toInt()
+        val sampleMask = (1 shl bitsPerComponent) - 1
+        val decoded = ByteArray(bytes.size)
+        for (rowStart in bytes.indices step rowBytes) {
+            val samples = IntArray(sampleCount)
+            for (sampleIndex in 0 until sampleCount) {
+                samples[sampleIndex] = readBits(
+                    bytes = bytes,
+                    bitOffset = rowStart * 8 + sampleIndex * bitsPerComponent,
+                    bitCount = bitsPerComponent,
+                )
+                if (sampleIndex >= colors) {
+                    samples[sampleIndex] = (samples[sampleIndex] + samples[sampleIndex - colors]) and sampleMask
+                }
+                writeBits(
+                    bytes = decoded,
+                    bitOffset = rowStart * 8 + sampleIndex * bitsPerComponent,
+                    bitCount = bitsPerComponent,
+                    value = samples[sampleIndex],
+                )
             }
-            rowStart += rowBytes
         }
         return decoded
+    }
+
+    private fun readBits(bytes: ByteArray, bitOffset: Int, bitCount: Int): Int {
+        var value = 0
+        repeat(bitCount) { relativeBit ->
+            val absoluteBit = bitOffset + relativeBit
+            val bit = (bytes[absoluteBit / 8].toInt() ushr (7 - absoluteBit % 8)) and 1
+            value = (value shl 1) or bit
+        }
+        return value
+    }
+
+    private fun writeBits(bytes: ByteArray, bitOffset: Int, bitCount: Int, value: Int) {
+        repeat(bitCount) { relativeBit ->
+            val absoluteBit = bitOffset + relativeBit
+            val mask = 1 shl (7 - absoluteBit % 8)
+            val bit = (value ushr (bitCount - relativeBit - 1)) and 1
+            val byteIndex = absoluteBit / 8
+            bytes[byteIndex] = if (bit == 1) {
+                (bytes[byteIndex].toInt() or mask).toByte()
+            } else {
+                (bytes[byteIndex].toInt() and mask.inv()).toByte()
+            }
+        }
     }
 
     private fun decodePngPredictor(
