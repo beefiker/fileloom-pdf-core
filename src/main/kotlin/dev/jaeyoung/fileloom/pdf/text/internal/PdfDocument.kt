@@ -288,7 +288,7 @@ internal class PdfDocument internal constructor(
                 val line = reader.readNonBlankLine()
                     ?: throw PdfParseException("missing trailer", reader.position)
                 val trimmed = line.text.trim()
-                if (trimmed.startsWith("trailer")) {
+                if (trimmed.startsWithPdfKeyword("trailer")) {
                     // Compute the byte offset immediately after the "trailer"
                     // keyword on the original line — the `<<` may follow on
                     // the same line or on a subsequent line.
@@ -360,6 +360,9 @@ internal class PdfDocument internal constructor(
                 ?: return null
             val widths = trailer.entries["W"].asXrefStreamWidths() ?: return null
             val indexes = trailer.entries["Index"].asXrefStreamIndexPairs() ?: listOf(0 to size)
+            val entryWidth = widths.sum()
+            if (entryWidth <= 0) return null
+            val expectedDecodedBytes = expectedXrefDecodedBytes(indexes, entryWidth) ?: return null
             val length = (trailer.entries["Length"] as? PdfObject.IntegerValue)?.value?.toInt()?.coerceAtLeast(0)
                 ?: return null
             val availablePayloadBytes = source.length - header.streamPayloadStart
@@ -371,13 +374,18 @@ internal class PdfDocument internal constructor(
                 return null
             }
             val rawBytes = readSlice(source, header.streamPayloadStart, length)
-            val decoded = PdfFilters.decode(rawBytes, trailer, strictFlate = true) { null } ?: return null
+            val decoded = PdfFilters.decode(
+                rawBytes = rawBytes,
+                streamDictionary = trailer,
+                strictFlate = true,
+                maxDecodedBytes = expectedDecodedBytes,
+                resolve = { null },
+            ) ?: return null
+            if (decoded.size != expectedDecodedBytes) return null
 
             val entries = linkedMapOf<PdfObjectId, PdfXrefEntry>()
             val compressedEntries = linkedMapOf<PdfObjectId, CompressedXrefEntry>()
             var cursor = 0
-            val entryWidth = widths.sum()
-            if (entryWidth <= 0) return null
             indexes.forEach { (firstObjectNumber, count) ->
                 repeat(count) { relativeIndex ->
                     if (cursor + entryWidth > decoded.size) return null
@@ -564,6 +572,12 @@ internal class PdfDocument internal constructor(
         private fun Int.isPdfWhitespace(): Boolean =
             this == 0 || this == 9 || this == 10 || this == 12 || this == 13 || this == 32
 
+        private fun String.startsWithPdfKeyword(keyword: String): Boolean {
+            if (!startsWith(keyword)) return false
+            val boundary = getOrNull(keyword.length) ?: return true
+            return boundary.code.isPdfWhitespace() || boundary in "()<>[]{}/%"
+        }
+
         private fun PdfObject?.asXrefStreamIndexPairs(): List<Pair<Int, Int>>? {
             val index = this ?: return null
             val array = index as? PdfObject.ArrayValue ?: return null
@@ -573,6 +587,17 @@ internal class PdfDocument internal constructor(
                 val count = (pair[1] as? PdfObject.IntegerValue)?.value?.toInt() ?: return null
                 start to count
             }
+        }
+
+        private fun expectedXrefDecodedBytes(indexes: List<Pair<Int, Int>>, entryWidth: Int): Int? {
+            var entryCount = 0L
+            indexes.forEach { (firstObjectNumber, count) ->
+                if (firstObjectNumber < 0 || count < 0) return null
+                if (firstObjectNumber.toLong() + count.toLong() > Int.MAX_VALUE.toLong() + 1L) return null
+                entryCount += count.toLong()
+                if (entryCount * entryWidth.toLong() > MAX_XREF_STREAM_BYTES.toLong()) return null
+            }
+            return (entryCount * entryWidth.toLong()).toInt()
         }
 
         private fun readXrefStreamField(bytes: ByteArray, offset: Int, width: Int): Long {

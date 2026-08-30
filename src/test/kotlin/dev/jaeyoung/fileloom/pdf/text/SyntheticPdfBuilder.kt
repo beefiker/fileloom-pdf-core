@@ -25,9 +25,10 @@ internal object SyntheticPdfBuilder {
     )
 
     /**
-     * Emits a PDF whose trailer keyword and dict-open `<<` share a single
-     * line — the exact pattern emitted by pdflatex / arXiv-style toolchains
-     * that broke `fileloom-pdf-parser-core` 0.3.0's xref reader.
+     * Emits a PDF whose trailer keyword and delimiter-adjacent dict-open `<<`
+     * share a single line — a legal lexical form of the pattern emitted by
+     * pdflatex / arXiv-style toolchains that broke
+     * `fileloom-pdf-parser-core` 0.3.0's xref reader.
      *
      * Used by the regression test for the lenient `PdfDocument` introduced
      * in `fileloom-pdf-core` 0.1.1.
@@ -89,6 +90,18 @@ internal object SyntheticPdfBuilder {
         val fakeXrefOffset = original.size
         return original +
             "xref\nstartxref\n$fakeXrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun twoPageOutlineWithTrailingTrailerKeywordPrefix(): ByteArray {
+        val original = twoPageOutlineWithTrailingBytes(8 * 1024)
+        val fakeXrefOffset = original.size
+        return original +
+            (
+                "xref\n" +
+                    "trailerjunk\n" +
+                    "<< /Size 1 /Root 1 0 R >>\n" +
+                    "startxref\n$fakeXrefOffset\n%%EOF\n"
+                ).toByteArray(StandardCharsets.ISO_8859_1)
     }
 
     fun twoPageOutlineWithIndirectTitles(): ByteArray {
@@ -292,6 +305,27 @@ internal object SyntheticPdfBuilder {
             ),
             flateXref = true,
             corruptFlateXref = true,
+        )
+    }
+
+    fun twoPageOutlineWithInflatedXrefPadding(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Padded xref page one) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Padded xref page two) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Padded xref chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Padded xref chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            flateXref = true,
+            trailingDecodedXrefBytes = 1,
         )
     }
 
@@ -728,7 +762,7 @@ internal object SyntheticPdfBuilder {
         // trailer
         val trailerBuilder = StringBuilder()
         if (singleLineTrailer) {
-            trailerBuilder.append("trailer << /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
+            trailerBuilder.append("trailer<< /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
         } else {
             trailerBuilder.append("trailer\n")
             trailerBuilder.append("<< /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
@@ -792,6 +826,7 @@ internal object SyntheticPdfBuilder {
         declaredLengthOverride: Int? = null,
         flateXref: Boolean = false,
         corruptFlateXref: Boolean = false,
+        trailingDecodedXrefBytes: Int = 0,
     ): ByteArray {
         val output = ByteArrayOutputStream()
         val offsets = mutableListOf<Long>()
@@ -829,7 +864,7 @@ internal object SyntheticPdfBuilder {
             field2 = 0,
             field1Width = encodedField1Width,
         )
-        val rawXrefBytes = xrefEntries.toByteArray()
+        val rawXrefBytes = xrefEntries.toByteArray() + ByteArray(trailingDecodedXrefBytes)
         var xrefBytes = if (pngPredictor != null) {
             deflate(encodePngUpRows(rawXrefBytes, rowBytes = 7))
         } else if (flateXref) {

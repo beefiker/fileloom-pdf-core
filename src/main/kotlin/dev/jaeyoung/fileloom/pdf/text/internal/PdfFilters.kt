@@ -17,10 +17,13 @@ internal object PdfFilters {
         rawBytes: ByteArray,
         streamDictionary: PdfObject.Dictionary,
         strictFlate: Boolean = false,
+        maxDecodedBytes: Int? = null,
         resolve: (PdfObject) -> PdfObject?,
     ): ByteArray? {
+        if (maxDecodedBytes != null && maxDecodedBytes < 0) return null
         val rawFilterEntry = streamDictionary.entries["Filter"]
-        val filterEntry = rawFilterEntry?.let { resolveIfNeeded(it, resolve) } ?: return rawBytes
+        val filterEntry = rawFilterEntry?.let { resolveIfNeeded(it, resolve) }
+            ?: return rawBytes.takeIf { maxDecodedBytes == null || it.size <= maxDecodedBytes }
         val filters = collectFilterNames(filterEntry, resolve) ?: return null
         val parmsEntry = streamDictionary.entries["DecodeParms"]?.let { resolveIfNeeded(it, resolve) }
         val parmsList = collectParms(parmsEntry, filters.size, resolve)
@@ -28,7 +31,8 @@ internal object PdfFilters {
         var current = rawBytes
         for ((index, filter) in filters.withIndex()) {
             val parms = parmsList.getOrNull(index)
-            current = applyFilter(filter, current, parms, strictFlate) ?: return null
+            current = applyFilter(filter, current, parms, strictFlate, maxDecodedBytes) ?: return null
+            if (maxDecodedBytes != null && current.size > maxDecodedBytes) return null
         }
         return current
     }
@@ -38,19 +42,54 @@ internal object PdfFilters {
         bytes: ByteArray,
         parms: PdfObject.Dictionary?,
         strictFlate: Boolean,
+        maxDecodedBytes: Int?,
     ): ByteArray? = when (filter) {
-        "FlateDecode", "Fl" -> flateDecode(bytes, strictFlate)?.let { applyPredictor(it, parms) }
+        "FlateDecode", "Fl" -> flateDecode(
+            bytes = bytes,
+            strict = strictFlate,
+            maxDecodedBytes = maxInflatedBytes(parms, maxDecodedBytes),
+        )?.let { applyPredictor(it, parms) }
         "ASCIIHexDecode", "AHx" -> asciiHexDecode(bytes)
         "ASCII85Decode", "A85" -> ascii85Decode(bytes)
         else -> null // LZWDecode, RunLengthDecode, CCITTFaxDecode, JBIG2Decode, DCTDecode, JPXDecode
     }
 
-    private fun flateDecode(bytes: ByteArray, strict: Boolean): ByteArray? {
+    private fun maxInflatedBytes(
+        parms: PdfObject.Dictionary?,
+        maxDecodedBytes: Int?,
+    ): Int? {
+        maxDecodedBytes ?: return null
+        val predictor = (parms?.entries?.get("Predictor") as? PdfObject.IntegerValue)?.value?.toInt() ?: 1
+        if (predictor !in 10..15) return maxDecodedBytes
+        val predictorParms = parms ?: return maxDecodedBytes
+
+        val colors = (predictorParms.entries["Colors"] as? PdfObject.IntegerValue)?.value?.toInt() ?: 1
+        val columns = (predictorParms.entries["Columns"] as? PdfObject.IntegerValue)?.value?.toInt() ?: 1
+        val bitsPerComponent = (predictorParms.entries["BitsPerComponent"] as? PdfObject.IntegerValue)
+            ?.value
+            ?.toInt()
+            ?: 8
+        if (colors <= 0 || columns <= 0 || bitsPerComponent <= 0) return maxDecodedBytes
+        val rowBits = colors.toLong() * columns.toLong() * bitsPerComponent.toLong()
+        val rowBytes = ((rowBits + 7L) / 8L).takeIf { it in 1..Int.MAX_VALUE } ?: return maxDecodedBytes
+        val rowCount = maxDecodedBytes.toLong() / rowBytes
+        return (rowCount * (rowBytes + 1L)).takeIf { it <= Int.MAX_VALUE }?.toInt()
+            ?: maxDecodedBytes
+    }
+
+    private fun flateDecode(
+        bytes: ByteArray,
+        strict: Boolean,
+        maxDecodedBytes: Int?,
+    ): ByteArray? {
         val inflater = Inflater()
         inflater.setInput(bytes)
-        val output = ByteArrayOutputStream(bytes.size * 4)
+        val defaultCapacity = (bytes.size.toLong() * 4L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val initialCapacity = maxDecodedBytes?.let { minOf(defaultCapacity, it) } ?: defaultCapacity
+        val output = ByteArrayOutputStream(initialCapacity)
         val buffer = ByteArray(4096)
         var failed = false
+        var exceededLimit = false
         try {
             while (!inflater.finished()) {
                 val n = inflater.inflate(buffer)
@@ -58,6 +97,13 @@ internal object PdfFilters {
                     if (inflater.needsInput() || inflater.needsDictionary()) break
                 }
                 if (n <= 0) break
+                if (
+                    maxDecodedBytes != null &&
+                    output.size().toLong() + n.toLong() > maxDecodedBytes.toLong()
+                ) {
+                    exceededLimit = true
+                    break
+                }
                 output.write(buffer, 0, n)
             }
         } catch (_: java.util.zip.DataFormatException) {
@@ -65,6 +111,7 @@ internal object PdfFilters {
         } finally {
             val complete = inflater.finished()
             inflater.end()
+            if (exceededLimit) return null
             if (strict && (failed || !complete)) return null
         }
         return output.toByteArray()

@@ -87,6 +87,17 @@ class PdfOutlineExtractorTest {
     }
 
     @Test
+    fun skipsTrailingStartXrefTargetThatOnlyPrefixesTrailerKeyword() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingTrailerKeywordPrefix())
+        )
+        assertNotNull(extractor)
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
+
+    @Test
     fun extractsNestedOutlineTreeWithPageIndexes() {
         val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutline()))
         assertNotNull(extractor)
@@ -210,6 +221,15 @@ class PdfOutlineExtractorTest {
         assertNull(
             PdfOutlineExtractor.open(
                 ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCorruptFlateXrefStream())
+            )
+        )
+    }
+
+    @Test
+    fun inflatedXrefStreamCannotDecodePastDeclaredEntryLayout() {
+        assertNull(
+            PdfOutlineExtractor.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithInflatedXrefPadding())
             )
         )
     }
