@@ -77,4 +77,21 @@ class PdfRenderPolicyTest {
             )
         )
     }
+
+    @Test
+    fun tileBoundsUseOverflowSafeEdges() {
+        assertEquals(
+            PdfRenderTile(x = 1, y = 1, width = 119, height = 179),
+            PdfRenderPolicy.clampTileToRenderBounds(
+                tile = PdfRenderTile(
+                    x = 1,
+                    y = 1,
+                    width = Int.MAX_VALUE,
+                    height = Int.MAX_VALUE,
+                ),
+                renderWidth = 120,
+                renderHeight = 180,
+            ),
+        )
+    }
 }

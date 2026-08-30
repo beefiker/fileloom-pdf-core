@@ -61,6 +61,18 @@ class PdfOutlineExtractorTest {
     }
 
     @Test
+    fun skipsTrailingStartXrefTargetThatOnlyStartsWithXrefText() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingXrefPrefixTarget())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
+
+    @Test
     fun extractsNestedOutlineTreeWithPageIndexes() {
         val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutline()))
         assertNotNull(extractor)
@@ -166,6 +178,30 @@ class PdfOutlineExtractorTest {
         extractor.use {
             assertEquals(
                 listOf("Predicted chapter 1", "Predicted chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
+    fun rejectsXrefStreamFieldWidthThatCannotFitInLong() {
+        assertNull(
+            PdfOutlineExtractor.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithOversizedDeclaredXrefWidth())
+            )
+        )
+    }
+
+    @Test
+    fun locatesXrefStreamKeywordAfterCommentsAndLongWhitespace() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCommentBeforeXrefStreamKeyword())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Comment chapter 1", "Comment chapter 2"),
                 it.extractTableOfContents().map(PdfTocEntry::title),
             )
         }

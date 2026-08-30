@@ -77,6 +77,13 @@ internal object SyntheticPdfBuilder {
         twoPageOutlineWithTrailingBytes(8 * 1024) +
             "\nstartxref\n1\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1)
 
+    fun twoPageOutlineWithTrailingXrefPrefixTarget(): ByteArray {
+        val original = twoPageOutlineWithTrailingBytes(8 * 1024)
+        val fakeXrefOffset = original.size
+        return original +
+            "xrefgarbage\nstartxref\n$fakeXrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
     fun twoPageOutlineWithIndirectTitles(): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
@@ -237,6 +244,47 @@ internal object SyntheticPdfBuilder {
                 "<< /Title (Predicted chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
             ),
             pngPredictor = 12,
+        )
+    }
+
+    fun twoPageOutlineWithOversizedDeclaredXrefWidth(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Width chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Width chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            declaredField1Width = 9,
+            encodedField1Width = 8,
+        )
+    }
+
+    fun twoPageOutlineWithCommentBeforeXrefStreamKeyword(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Comment chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Comment chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            streamPrelude = "% stream appears only in this comment\n${" ".repeat(80)}",
         )
     }
 
@@ -558,6 +606,9 @@ internal object SyntheticPdfBuilder {
     private fun buildPdfObjectsWithXrefStream(
         objects: List<String>,
         pngPredictor: Int? = null,
+        declaredField1Width: Int = 4,
+        encodedField1Width: Int = declaredField1Width,
+        streamPrelude: String = "",
     ): ByteArray {
         val output = ByteArrayOutputStream()
         val offsets = mutableListOf<Long>()
@@ -572,11 +623,29 @@ internal object SyntheticPdfBuilder {
         val xrefOffset = output.size().toLong()
         val totalObjects = xrefObjectNumber + 1
         val xrefEntries = ByteArrayOutputStream()
-        writeXrefStreamEntry(xrefEntries, type = 0, field1 = 0, field2 = 65535)
+        writeXrefStreamEntry(
+            xrefEntries,
+            type = 0,
+            field1 = 0,
+            field2 = 65535,
+            field1Width = encodedField1Width,
+        )
         offsets.forEach { objectOffset ->
-            writeXrefStreamEntry(xrefEntries, type = 1, field1 = objectOffset, field2 = 0)
+            writeXrefStreamEntry(
+                xrefEntries,
+                type = 1,
+                field1 = objectOffset,
+                field2 = 0,
+                field1Width = encodedField1Width,
+            )
         }
-        writeXrefStreamEntry(xrefEntries, type = 1, field1 = xrefOffset, field2 = 0)
+        writeXrefStreamEntry(
+            xrefEntries,
+            type = 1,
+            field1 = xrefOffset,
+            field2 = 0,
+            field1Width = encodedField1Width,
+        )
         val rawXrefBytes = xrefEntries.toByteArray()
         val xrefBytes = if (pngPredictor == null) {
             rawXrefBytes
@@ -591,9 +660,10 @@ internal object SyntheticPdfBuilder {
 
         output.write("$xrefObjectNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
         output.write(
-            "<< /Type /XRef /Size $totalObjects /Root 1 0 R /W [1 4 2] /Index [0 $totalObjects] /Length ${xrefBytes.size}$filterEntries >>\n"
+            "<< /Type /XRef /Size $totalObjects /Root 1 0 R /W [1 $declaredField1Width 2] /Index [0 $totalObjects] /Length ${xrefBytes.size}$filterEntries >>\n"
                 .toByteArray(StandardCharsets.ISO_8859_1)
         )
+        output.write(streamPrelude.toByteArray(StandardCharsets.ISO_8859_1))
         output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
         output.write(xrefBytes)
         output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
@@ -688,22 +758,29 @@ internal object SyntheticPdfBuilder {
         type: Int,
         field1: Long,
         field2: Int,
+        field1Width: Int = 4,
     ) {
         output.write(type)
-        output.write(((field1 shr 24) and 0xff).toInt())
-        output.write(((field1 shr 16) and 0xff).toInt())
-        output.write(((field1 shr 8) and 0xff).toInt())
-        output.write((field1 and 0xff).toInt())
+        for (byteIndex in field1Width - 1 downTo 0) {
+            output.write(((field1 shr (byteIndex * 8)) and 0xff).toInt())
+        }
         output.write((field2 shr 8) and 0xff)
         output.write(field2 and 0xff)
     }
 
     private fun encodePngUpRows(bytes: ByteArray, rowBytes: Int): ByteArray {
         require(rowBytes > 0 && bytes.size % rowBytes == 0)
-        val encoded = ByteArray(bytes.size)
-        for (index in bytes.indices) {
-            val previous = if (index >= rowBytes) bytes[index - rowBytes].toInt() and 0xff else 0
-            encoded[index] = ((bytes[index].toInt() and 0xff) - previous).toByte()
+        val rowCount = bytes.size / rowBytes
+        val encoded = ByteArray(rowCount * (rowBytes + 1))
+        for (row in 0 until rowCount) {
+            val sourceStart = row * rowBytes
+            val targetStart = row * (rowBytes + 1)
+            encoded[targetStart] = 2
+            for (column in 0 until rowBytes) {
+                val index = sourceStart + column
+                val previous = if (row > 0) bytes[index - rowBytes].toInt() and 0xff else 0
+                encoded[targetStart + 1 + column] = ((bytes[index].toInt() and 0xff) - previous).toByte()
+            }
         }
         return encoded
     }
