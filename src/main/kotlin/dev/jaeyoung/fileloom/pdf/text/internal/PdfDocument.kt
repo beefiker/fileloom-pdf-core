@@ -109,8 +109,9 @@ internal class PdfDocument internal constructor(
         val dictionary = parseIndirectObjectDictionary(reference) ?: return null
         val type = (dictionary.entries["Type"] as? PdfObject.Name)?.value
         if (type != "ObjStm") return null
-        val count = (dictionary.entries["N"] as? PdfObject.IntegerValue)?.value?.toInt()?.coerceAtLeast(0)
-            ?: return null
+        val declaredCount = (dictionary.entries["N"] as? PdfObject.IntegerValue)?.value ?: return null
+        if (declaredCount !in 0..MAX_OBJECT_STREAM_OBJECTS.toLong()) return null
+        val count = declaredCount.toInt()
         val first = (dictionary.entries["First"] as? PdfObject.IntegerValue)?.value?.toLong()?.coerceAtLeast(0)
             ?: return null
         val stream = PdfStreamReader.extractStream(
@@ -600,6 +601,7 @@ internal class PdfDocument internal constructor(
                 if (firstObjectNumber < 0 || count < 0) return null
                 if (firstObjectNumber.toLong() + count.toLong() > Int.MAX_VALUE.toLong() + 1L) return null
                 entryCount += count.toLong()
+                if (entryCount > MAX_XREF_ENTRIES.toLong()) return null
                 if (entryCount * entryWidth.toLong() > MAX_XREF_STREAM_BYTES.toLong()) return null
             }
             return (entryCount * entryWidth.toLong()).toInt()
@@ -621,6 +623,8 @@ internal class PdfDocument internal constructor(
         private const val STARTXREF_WINDOW_OVERLAP_BYTES = 128
         private const val MAX_STARTXREF_TAIL_BYTES = 1024 * 1024
         private const val MAX_OBJECT_STREAM_BYTES = 64 * 1024 * 1024
+        private const val MAX_OBJECT_STREAM_OBJECTS = 100_000
+        private const val MAX_XREF_ENTRIES = 100_000
         private const val MAX_XREF_STREAM_BYTES = 64 * 1024 * 1024
         private const val STARTXREF_MARKER = "startxref"
 

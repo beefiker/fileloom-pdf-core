@@ -372,6 +372,19 @@ class PdfOutlineExtractorTest {
     }
 
     @Test
+    fun excessiveObjectStreamCountIsRejectedBeforePayloadRead() {
+        val source = TrackingPdfByteSource(
+            SyntheticPdfBuilder.twoPageOutlineWithExcessiveObjectStreamCount()
+        )
+        val extractor = PdfOutlineExtractor.open(source)
+        assertNotNull(extractor)
+
+        extractor.use { it.extractTableOfContents() }
+
+        assertTrue(source.maxRequestedBytes.get() < 128 * 1024)
+    }
+
+    @Test
     fun compressedObjectResolutionHonorsDeclaredObjectStreamIndex() {
         val extractor = PdfOutlineExtractor.open(
             ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithMismatchedCompressedObjectIndex())

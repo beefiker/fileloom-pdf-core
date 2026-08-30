@@ -26,4 +26,13 @@ class PdfStreamReaderTest {
             )
         }
     }
+
+    @Test
+    fun xrefLayoutsAboveEntryBudgetAreRejected() {
+        assertNull(
+            PdfDocument.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.pdfWithExcessiveXrefEntryCount())
+            )
+        )
+    }
 }

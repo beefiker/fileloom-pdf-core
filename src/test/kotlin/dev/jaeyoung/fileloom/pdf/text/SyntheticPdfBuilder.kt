@@ -606,8 +606,16 @@ internal object SyntheticPdfBuilder {
     fun twoPageOutlineWithOversizedDeclaredObjectStreamLength(): ByteArray =
         twoPageOutlineWithXrefAndObjectStreams(objectStreamDeclaredLengthOverride = 1024 * 1024)
 
+    fun twoPageOutlineWithExcessiveObjectStreamCount(): ByteArray =
+        twoPageOutlineWithXrefAndObjectStreams(
+            objectStreamDeclaredCountOverride = 100_001,
+            objectStreamTrailingBytes = 256 * 1024,
+        )
+
     fun twoPageOutlineWithXrefAndObjectStreams(
         objectStreamDeclaredLengthOverride: Int? = null,
+        objectStreamDeclaredCountOverride: Int? = null,
+        objectStreamTrailingBytes: Int = 0,
     ): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
@@ -628,7 +636,25 @@ internal object SyntheticPdfBuilder {
                 11 to "<< /Title (Compressed section) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
             ),
             objectStreamDeclaredLengthOverride = objectStreamDeclaredLengthOverride,
+            objectStreamDeclaredCountOverride = objectStreamDeclaredCountOverride,
+            objectStreamTrailingBytes = objectStreamTrailingBytes,
         )
+    }
+
+    fun pdfWithExcessiveXrefEntryCount(): ByteArray {
+        val output = ByteArrayOutputStream()
+        val entryCount = 100_001
+        output.write("%PDF-1.5\n%âãÏÓ\n".toByteArray(StandardCharsets.ISO_8859_1))
+        val xrefOffset = output.size().toLong()
+        output.write("1 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size $entryCount /Root 1 0 R /W [0 1 0] /Index [0 $entryCount] /Length $entryCount >>\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(ByteArray(entryCount))
+        output.write("\nendstream\nendobj\nstartxref\n$xrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
     }
 
     fun twoPageOutlineWithMismatchedCompressedObjectIndex(): ByteArray =
@@ -912,6 +938,8 @@ internal object SyntheticPdfBuilder {
         compressedIndexOverrides: Map<Int, Int> = emptyMap(),
         objectStreamHeaderNumber: Int = 12,
         objectStreamDeclaredLengthOverride: Int? = null,
+        objectStreamDeclaredCountOverride: Int? = null,
+        objectStreamTrailingBytes: Int = 0,
     ): ByteArray {
         val output = ByteArrayOutputStream()
         val objectOffsets = linkedMapOf<Int, Long>()
@@ -924,13 +952,15 @@ internal object SyntheticPdfBuilder {
 
         val objectStreamNumber = 12
         val objectStreamBytes = buildObjectStreamBytes(compressedObjects)
-        val objectStreamPayload = if (flateObjectStream) deflate(objectStreamBytes.second) else objectStreamBytes.second
+        val objectStreamDecodedBytes = objectStreamBytes.second + ByteArray(objectStreamTrailingBytes)
+        val objectStreamPayload = if (flateObjectStream) deflate(objectStreamDecodedBytes) else objectStreamDecodedBytes
         val objectStreamFilter = if (flateObjectStream) " /Filter /FlateDecode" else ""
         val objectStreamDeclaredLength = objectStreamDeclaredLengthOverride ?: objectStreamPayload.size
+        val objectStreamDeclaredCount = objectStreamDeclaredCountOverride ?: compressedObjects.size
         objectOffsets[objectStreamNumber] = output.size().toLong()
         output.write("$objectStreamHeaderNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
         output.write(
-            "<< /Type /ObjStm /N ${compressedObjects.size} /First ${objectStreamBytes.first} /Length $objectStreamDeclaredLength$objectStreamFilter >>\n"
+            "<< /Type /ObjStm /N $objectStreamDeclaredCount /First ${objectStreamBytes.first} /Length $objectStreamDeclaredLength$objectStreamFilter >>\n"
                 .toByteArray(StandardCharsets.ISO_8859_1)
         )
         output.write(objectStreamPrelude.toByteArray(StandardCharsets.ISO_8859_1))
