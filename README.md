@@ -5,7 +5,7 @@ PDF text, outline, and annotation core library for Fileloom.
 Coordinates:
 
 ```kotlin
-implementation("dev.jaeyoung:fileloom-pdf-core:0.2.0")
+implementation("dev.jaeyoung:fileloom-pdf-core:0.2.7")
 ```
 
 ## Goal
@@ -33,7 +33,7 @@ In scope:
 - **ToUnicode CMap** parser (`bfchar` + `bfrange` entries). This is the load-bearing piece — without it, glyph codes don't map back to readable Unicode.
 - Standard-14 encoding fallback (`WinAnsiEncoding`, `MacRomanEncoding`, `StandardEncoding`).
 - Heuristic reading-order: top-to-bottom by Y, left-to-right by X within a line band.
-- Outline extraction: walks `/Outlines` linked lists, preserves nested children, resolves named/internal actions, and supports classic xref tables plus PDF 1.5 xref/object streams.
+- Outline extraction: walks `/Outlines` linked lists, preserves nested children, resolves named/internal actions, supports classic xref tables plus PDF 1.5 xref/object streams, and applies bounded trailing-data outline recovery across the final 1 MiB without changing the extractor API.
 - Incremental annotation export: appends Highlight and Text/sticky-note annotation objects, updates page `/Annots`, preserves the original bytes, and links the new xref to the previous one with `/Prev`.
 - Render policy primitives: stable width buckets, safe render dimensions, fallback widths, request keys, tile keys, priority reasons, and telemetry event models. The Android renderer and coroutine scheduler remain app-side.
 
