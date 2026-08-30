@@ -221,7 +221,9 @@ internal class PdfDocument internal constructor(
         private fun isXrefStructureAt(source: PdfByteSource, offset: Long): Boolean = runCatching {
             if (readByteAt(source, offset) == 'x'.code) {
                 val remaining = source.length - offset
-                remaining >= 4L && readSlice(source, offset, 4).contentEquals("xref".toByteArray())
+                remaining >= 5L &&
+                    readSlice(source, offset, 4).contentEquals("xref".toByteArray()) &&
+                    readByteAt(source, offset + 4L).isPdfWhitespace()
             } else {
                 val header = parseIndirectStreamHeader(source, offset) ?: return@runCatching false
                 (header.dictionary.entries["Type"] as? PdfObject.Name)?.value == "XRef"
@@ -261,7 +263,7 @@ internal class PdfDocument internal constructor(
             val firstLine = reader.readNonBlankLine()
                 ?: throw PdfParseException("missing xref keyword", xrefOffset)
             val firstLineTrimmed = firstLine.text.trim()
-            if (firstLineTrimmed != "xref" && !firstLineTrimmed.startsWith("xref")) {
+            if (firstLineTrimmed != "xref") {
                 throw PdfParseException("expected xref keyword, got '$firstLineTrimmed'", firstLine.offset)
             }
 
@@ -507,40 +509,38 @@ internal class PdfDocument internal constructor(
         }
 
         private fun locateStreamPayloadStart(source: PdfByteSource, dictionaryEnd: Long): Long {
-            val window = ByteArray(64)
-            val remaining = (source.length - dictionaryEnd).toInt()
-            val read = source.read(dictionaryEnd, window, 0, window.size.coerceAtMost(remaining))
-            if (read <= 0) return dictionaryEnd
-
-            val needle = byteArrayOf(
-                's'.code.toByte(), 't'.code.toByte(), 'r'.code.toByte(),
-                'e'.code.toByte(), 'a'.code.toByte(), 'm'.code.toByte(),
-            )
-            var found = -1
-            for (i in 0..read - needle.size) {
-                var match = true
-                for (j in needle.indices) {
-                    if (window[i + j] != needle[j]) { match = false; break }
-                }
-                if (match) { found = i; break }
+            val token = PdfLexer(source, startPosition = dictionaryEnd).nextToken() as? PdfToken.Keyword
+                ?: throw PdfParseException("missing stream keyword", dictionaryEnd)
+            if (token.value != "stream") {
+                throw PdfParseException("expected stream keyword", token.offset)
             }
-            if (found < 0) return dictionaryEnd
-
-            var cursor = dictionaryEnd + found + needle.size
-            val one = ByteArray(1)
-            if (source.read(cursor, one, 0, 1) == 1 && one[0] == 0x0d.toByte()) cursor += 1
-            if (source.read(cursor, one, 0, 1) == 1 && one[0] == 0x0a.toByte()) cursor += 1
-            return cursor
+            val afterKeyword = token.offset + "stream".length
+            return when (readByteAt(source, afterKeyword)) {
+                '\n'.code -> afterKeyword + 1L
+                '\r'.code -> if (
+                    afterKeyword + 1L < source.length &&
+                    readByteAt(source, afterKeyword + 1L) == '\n'.code
+                ) {
+                    afterKeyword + 2L
+                } else {
+                    afterKeyword + 1L
+                }
+                else -> throw PdfParseException("stream keyword is not followed by an EOL", afterKeyword)
+            }
         }
 
         private fun PdfObject?.asXrefStreamWidths(): IntArray? {
             val widths = this as? PdfObject.ArrayValue ?: return null
             if (widths.items.size < 3) return null
             return IntArray(3) { index ->
-                ((widths.items[index] as? PdfObject.IntegerValue)?.value?.toInt() ?: return null)
-                    .coerceIn(0, 8)
+                val width = (widths.items[index] as? PdfObject.IntegerValue)?.value?.toInt()
+                    ?: return null
+                width.takeIf { it in 0..8 } ?: return null
             }
         }
+
+        private fun Int.isPdfWhitespace(): Boolean =
+            this == 0 || this == 9 || this == 10 || this == 12 || this == 13 || this == 32
 
         private fun PdfObject?.asXrefStreamIndexPairs(): List<Pair<Int, Int>>? {
             val index = this ?: return null

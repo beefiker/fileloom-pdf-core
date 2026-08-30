@@ -76,8 +76,12 @@ object PdfRenderPolicy {
         }
         val left = tile.x.coerceIn(0, renderWidth)
         val top = tile.y.coerceIn(0, renderHeight)
-        val right = (tile.x + tile.width).coerceIn(left, renderWidth)
-        val bottom = (tile.y + tile.height).coerceIn(top, renderHeight)
+        val right = (tile.x.toLong() + tile.width.toLong())
+            .coerceIn(left.toLong(), renderWidth.toLong())
+            .toInt()
+        val bottom = (tile.y.toLong() + tile.height.toLong())
+            .coerceIn(top.toLong(), renderHeight.toLong())
+            .toInt()
         val width = right - left
         val height = bottom - top
         if (width <= 0 || height <= 0) return null

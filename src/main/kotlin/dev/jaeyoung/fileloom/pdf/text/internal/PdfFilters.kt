@@ -115,8 +115,7 @@ internal object PdfFilters {
         bytesPerPixel: Int,
         predictor: Int,
     ): ByteArray? {
-        val hasRowTags = predictor == 15
-        val encodedRowBytes = rowBytes + if (hasRowTags) 1 else 0
+        val encodedRowBytes = rowBytes + 1
         if (encodedRowBytes <= 0 || bytes.size % encodedRowBytes != 0) return null
         val rowCount = bytes.size / encodedRowBytes
         val decodedSize = rowCount.toLong() * rowBytes.toLong()
@@ -124,11 +123,7 @@ internal object PdfFilters {
         val decoded = ByteArray(decodedSize.toInt())
         var sourceOffset = 0
         for (row in 0 until rowCount) {
-            val filter = if (hasRowTags) {
-                bytes[sourceOffset++].toInt() and 0xff
-            } else {
-                predictor - 10
-            }
+            val filter = bytes[sourceOffset++].toInt() and 0xff
             if (filter !in 0..4) return null
             val rowStart = row * rowBytes
             for (column in 0 until rowBytes) {
