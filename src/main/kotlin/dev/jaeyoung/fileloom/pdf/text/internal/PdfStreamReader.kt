@@ -31,7 +31,9 @@ internal object PdfStreamReader {
     fun extractStream(
         document: PdfDocument,
         reference: PdfObject.Reference,
-    ): ByteArray? = extractSingleStream(document, reference)
+        maxRawBytes: Int? = null,
+        maxDecodedBytes: Int? = null,
+    ): ByteArray? = extractSingleStream(document, reference, maxRawBytes, maxDecodedBytes)
 
     private fun collectStreamReferences(contents: PdfObject?): List<PdfObject.Reference>? {
         return when (contents) {
@@ -45,15 +47,25 @@ internal object PdfStreamReader {
     private fun extractSingleStream(
         document: PdfDocument,
         reference: PdfObject.Reference,
+        maxRawBytes: Int? = null,
+        maxDecodedBytes: Int? = null,
     ): ByteArray? {
+        if (maxRawBytes != null && maxRawBytes < 0) return null
+        if (maxDecodedBytes != null && maxDecodedBytes < 0) return null
         val id = PdfObjectId(reference.objectNumber, reference.generationNumber)
         val xrefEntry = document.xrefEntries[id] as? PdfXrefEntry.InUse ?: return null
 
         val source = document.source
         val lexer = PdfLexer(source, startPosition = xrefEntry.offset)
 
-        if (lexer.nextToken() !is PdfToken.IntegerNumber) return null
-        if (lexer.nextToken() !is PdfToken.IntegerNumber) return null
+        val objectNumber = lexer.nextToken() as? PdfToken.IntegerNumber ?: return null
+        val generationNumber = lexer.nextToken() as? PdfToken.IntegerNumber ?: return null
+        if (
+            objectNumber.value != reference.objectNumber.toLong() ||
+            generationNumber.value != reference.generationNumber.toLong()
+        ) {
+            return null
+        }
         val objKeyword = lexer.nextToken() as? PdfToken.Keyword ?: return null
         if (objKeyword.value != "obj") return null
 
@@ -63,10 +75,24 @@ internal object PdfStreamReader {
         if (length <= 0) return ByteArray(0)
 
         val endOffsetInclusive = locateDictionaryEnd(source, first.offset)
-        val payloadStart = locateStreamPayloadStart(source, endOffsetInclusive)
+        val payloadStart = locateStreamPayloadStart(source, endOffsetInclusive) ?: return null
+        val availablePayloadBytes = source.length - payloadStart
+        if (
+            (maxRawBytes != null && length > maxRawBytes) ||
+            availablePayloadBytes < 0L ||
+            length.toLong() > availablePayloadBytes
+        ) {
+            return null
+        }
         val rawBytes = readBytes(source, payloadStart, length)
+        if (rawBytes.size != length) return null
 
-        return PdfFilters.decode(rawBytes, dictionary, resolveAny(document))
+        return PdfFilters.decode(
+            rawBytes = rawBytes,
+            streamDictionary = dictionary,
+            maxDecodedBytes = maxDecodedBytes,
+            resolve = resolveAny(document),
+        )
     }
 
     private fun resolveAny(document: PdfDocument): (PdfObject) -> PdfObject? = { value ->
@@ -95,31 +121,29 @@ internal object PdfStreamReader {
         }
     }
 
-    private fun locateStreamPayloadStart(source: PdfByteSource, dictionaryEnd: Long): Long {
-        val window = ByteArray(64)
-        val remaining = (source.length - dictionaryEnd).toInt()
-        val read = source.read(dictionaryEnd, window, 0, window.size.coerceAtMost(remaining))
-        if (read <= 0) return dictionaryEnd
-
-        val needle = byteArrayOf(
-            's'.code.toByte(), 't'.code.toByte(), 'r'.code.toByte(),
-            'e'.code.toByte(), 'a'.code.toByte(), 'm'.code.toByte(),
-        )
-        var found = -1
-        for (i in 0..read - needle.size) {
-            var match = true
-            for (j in needle.indices) {
-                if (window[i + j] != needle[j]) { match = false; break }
+    private fun locateStreamPayloadStart(source: PdfByteSource, dictionaryEnd: Long): Long? {
+        val token = PdfLexer(source, startPosition = dictionaryEnd).nextToken() as? PdfToken.Keyword
+            ?: return null
+        if (token.value != "stream") return null
+        val afterKeyword = token.offset + "stream".length
+        return when (readByteAt(source, afterKeyword)) {
+            '\n'.code -> afterKeyword + 1L
+            '\r'.code -> if (
+                afterKeyword + 1L < source.length &&
+                readByteAt(source, afterKeyword + 1L) == '\n'.code
+            ) {
+                afterKeyword + 2L
+            } else {
+                afterKeyword + 1L
             }
-            if (match) { found = i; break }
+            else -> null
         }
-        if (found < 0) return dictionaryEnd
+    }
 
-        var cursor = dictionaryEnd + found + needle.size
-        val one = ByteArray(1)
-        if (source.read(cursor, one, 0, 1) == 1 && one[0] == 0x0d.toByte()) cursor += 1
-        if (source.read(cursor, one, 0, 1) == 1 && one[0] == 0x0a.toByte()) cursor += 1
-        return cursor
+    private fun readByteAt(source: PdfByteSource, position: Long): Int {
+        if (position !in 0 until source.length) return -1
+        val byte = ByteArray(1)
+        return if (source.read(position, byte, 0, 1) == 1) byte[0].toInt() and 0xff else -1
     }
 
     private fun readBytes(source: PdfByteSource, start: Long, count: Int): ByteArray {

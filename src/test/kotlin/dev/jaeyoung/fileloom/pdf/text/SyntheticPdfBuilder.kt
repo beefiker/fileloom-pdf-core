@@ -25,9 +25,10 @@ internal object SyntheticPdfBuilder {
     )
 
     /**
-     * Emits a PDF whose trailer keyword and dict-open `<<` share a single
-     * line — the exact pattern emitted by pdflatex / arXiv-style toolchains
-     * that broke `fileloom-pdf-parser-core` 0.3.0's xref reader.
+     * Emits a PDF whose trailer keyword and delimiter-adjacent dict-open `<<`
+     * share a single line — a legal lexical form of the pattern emitted by
+     * pdflatex / arXiv-style toolchains that broke
+     * `fileloom-pdf-parser-core` 0.3.0's xref reader.
      *
      * Used by the regression test for the lenient `PdfDocument` introduced
      * in `fileloom-pdf-core` 0.1.1.
@@ -53,6 +54,75 @@ internal object SyntheticPdfBuilder {
                 "<< /Title (Chapter 1) /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
                 "<< /Title (Chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
                 "<< /Title (Section 1.1) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
+            )
+        )
+    }
+
+    fun twoPageOutlineWithTrailingBytes(trailingByteCount: Int): ByteArray {
+        require(trailingByteCount >= 0)
+        return twoPageOutline() +
+            "\n% Fileloom outline compatibility tail\n".toByteArray(StandardCharsets.ISO_8859_1) +
+            ByteArray(trailingByteCount) { ' '.code.toByte() }
+    }
+
+    fun twoPageOutlineWithStartXrefDistanceFromEof(distance: Int): ByteArray {
+        val original = twoPageOutline()
+        val marker = original.toString(StandardCharsets.ISO_8859_1).lastIndexOf("startxref")
+        require(marker >= 0)
+        val currentDistance = original.size - marker
+        require(distance >= currentDistance)
+        return original + ByteArray(distance - currentDistance) { ' '.code.toByte() }
+    }
+
+    fun twoPageOutlineWithTrailingBogusStartXref(): ByteArray =
+        twoPageOutlineWithTrailingBytes(8 * 1024) +
+            "\nstartxref\n1\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1)
+
+    fun twoPageOutlineWithTrailingXrefPrefixTarget(): ByteArray {
+        val original = twoPageOutlineWithTrailingBytes(8 * 1024)
+        val fakeXrefOffset = original.size
+        return original +
+            "xrefgarbage\nstartxref\n$fakeXrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun twoPageOutlineWithTrailingUnparseableXrefTarget(): ByteArray {
+        val original = twoPageOutlineWithTrailingBytes(8 * 1024)
+        val fakeXrefOffset = original.size
+        return original +
+            "xref\nstartxref\n$fakeXrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun twoPageOutlineWithTrailingTrailerKeywordPrefix(): ByteArray {
+        val original = twoPageOutlineWithTrailingBytes(8 * 1024)
+        val fakeXrefOffset = original.size
+        return original +
+            (
+                "xref\n" +
+                    "trailerjunk\n" +
+                    "<< /Size 1 /Root 1 0 R >>\n" +
+                    "startxref\n$fakeXrefOffset\n%%EOF\n"
+                ).toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun twoPageOutlineWithIndirectTitles(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title 12 0 R /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
+                "<< /Title 13 0 R /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                "<< /Title 14 0 R /Parent 9 0 R /Dest [6 0 R /Fit] >>",
+                "(Indirect chapter 1)",
+                "(Indirect chapter 2)",
+                "(Indirect section)",
             )
         )
     }
@@ -95,6 +165,559 @@ internal object SyntheticPdfBuilder {
                 "<< /Names [(ChapterOne) [3 0 R /XYZ null null null] (ChapterTwo) 12 0 R] >>",
                 "<< /D [6 0 R /Fit] >>",
             )
+        )
+    }
+
+    fun twoPageOutlineWithNamedActions(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 11 0 R /Count 3 >>",
+                "<< /Title (First page action) /Parent 8 0 R /A << /S /Named /N /FirstPage >> /Next 10 0 R >>",
+                "<< /Title (Last page action) /Parent 8 0 R /A << /S /Named /N /LastPage >> /Prev 9 0 R /Next 11 0 R >>",
+                "<< /Title (Remote action) /Parent 8 0 R /A << /S /GoToR /F (other.pdf) /D [1 /Fit] >> /Prev 10 0 R >>",
+            )
+        )
+    }
+
+    fun twoPageOutlineWithIndirectNamedActions(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Indirect first page action) /Parent 8 0 R /A << /S /Named /N 11 0 R >> /Next 10 0 R >>",
+                "<< /Title (Indirect last page action) /Parent 8 0 R /A << /S /Named /N 12 0 R >> /Prev 9 0 R >>",
+                "/FirstPage",
+                "/LastPage",
+            )
+        )
+    }
+
+    fun twoPageOutlineWithOutOfRangeIntegerDestination(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjects(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 9 0 R /Count 1 >>",
+                "<< /Title (Clamped chapter) /Parent 8 0 R /Dest [99 /Fit] >>",
+            )
+        )
+    }
+
+    fun twoPageOutlineWithXrefStream(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Chapter 1) /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
+                "<< /Title (Chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                "<< /Title (Section 1.1) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
+            )
+        )
+    }
+
+    fun twoPageOutlineWithPngUpPredictedXrefStream(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Predicted chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Predicted chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            pngPredictor = 12,
+        )
+    }
+
+    fun twoPageOutlineWithOversizedDeclaredXrefLength(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Oversized length chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Oversized length chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            declaredLengthOverride = 70_000_000,
+        )
+    }
+
+    fun twoPageOutlineWithCorruptFlateXrefStream(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Corrupt xref chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Corrupt xref chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            flateXref = true,
+            corruptFlateXref = true,
+        )
+    }
+
+    fun twoPageOutlineWithInflatedXrefPadding(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Padded xref page one) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Padded xref page two) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Padded xref chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Padded xref chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            flateXref = true,
+            trailingDecodedXrefBytes = 1,
+        )
+    }
+
+    fun twoPageOutlineWithOversizedDeclaredXrefWidth(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Width chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Width chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            declaredField1Width = 9,
+            encodedField1Width = 8,
+        )
+    }
+
+    fun twoPageOutlineWithUnknownWideXrefEntryType(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        val objects = listOf(
+            "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+            pageOneContent,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+            pageTwoContent,
+            "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+            "<< /Title (Unknown type chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+            "<< /Title (Unknown type chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+        )
+        val output = ByteArrayOutputStream()
+        val offsets = mutableListOf<Long>()
+        output.write("%PDF-1.5\n".toByteArray(StandardCharsets.ISO_8859_1))
+        objects.forEachIndexed { index, body ->
+            offsets += output.size().toLong()
+            output.write("${index + 1} 0 obj\n$body\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        }
+        val xrefObjectNumber = objects.size + 1
+        val xrefOffset = output.size().toLong()
+        val totalObjects = xrefObjectNumber + 1
+        val entries = ByteArrayOutputStream()
+        writeWideTypeXrefStreamEntry(entries, type = 0L, field1 = 0L, field2 = 65535)
+        offsets.forEachIndexed { index, offset ->
+            val type = if (index == 0) 0x1_0000_0001L else 1L
+            writeWideTypeXrefStreamEntry(entries, type = type, field1 = offset, field2 = 0)
+        }
+        writeWideTypeXrefStreamEntry(entries, type = 1L, field1 = xrefOffset, field2 = 0)
+        val xrefBytes = entries.toByteArray()
+        output.write("$xrefObjectNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size $totalObjects /Root 1 0 R /W [8 4 2] /Index [0 $totalObjects] /Length ${xrefBytes.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(xrefBytes)
+        output.write("\nendstream\nendobj\nstartxref\n$xrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
+    fun twoPageOutlineWithCommentBeforeXrefStreamKeyword(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithXrefStream(
+            objects = listOf(
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageOneContent,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                pageTwoContent,
+                "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                "<< /Title (Comment chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                "<< /Title (Comment chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            ),
+            streamPrelude = "% stream appears only in this comment\n${" ".repeat(80)}",
+        )
+    }
+
+    fun twoPageOutlineWithCommentBeforeObjectStreamKeyword(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithCompressedOutline(
+            regularObjects = listOf(
+                1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                2 to "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                3 to "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+                4 to pageOneContent,
+                5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                6 to "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+                7 to pageTwoContent,
+            ),
+            compressedObjects = listOf(
+                8 to "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                9 to "<< /Title (Object stream chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                10 to "<< /Title (Object stream chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                11 to "<< /Unused true >>",
+            ),
+            objectStreamPrelude = "% delayed object stream keyword\n${" ".repeat(80)}",
+        )
+    }
+
+    fun twoPageOutlineWithHybridXref(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        val regularObjects = listOf(
+            1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+            2 to "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+            3 to "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            4 to pageOneContent,
+            5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+            6 to "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            7 to pageTwoContent,
+        )
+        val compressedObjects = listOf(
+            8 to "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+            9 to "<< /Title (Hybrid chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+            10 to "<< /Title (Hybrid chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+            11 to "<< /Unused true >>",
+        )
+        val output = ByteArrayOutputStream()
+        val offsets = linkedMapOf<Int, Long>()
+        output.write("%PDF-1.5\n%âãÏÓ\n".toByteArray(StandardCharsets.ISO_8859_1))
+        regularObjects.forEach { (objectNumber, body) ->
+            offsets[objectNumber] = output.size().toLong()
+            output.write("$objectNumber 0 obj\n$body\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        }
+
+        val objectStreamNumber = 12
+        val objectStream = buildObjectStreamBytes(compressedObjects)
+        offsets[objectStreamNumber] = output.size().toLong()
+        output.write("$objectStreamNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /ObjStm /N ${compressedObjects.size} /First ${objectStream.first} /Length ${objectStream.second.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(objectStream.second)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        val xrefStreamNumber = 13
+        val xrefStreamOffset = output.size().toLong()
+        val supplementalEntries = ByteArrayOutputStream()
+        compressedObjects.forEachIndexed { index, _ ->
+            writeXrefStreamEntry(supplementalEntries, type = 2, field1 = objectStreamNumber.toLong(), field2 = index)
+        }
+        writeXrefStreamEntry(supplementalEntries, type = 1, field1 = offsets.getValue(objectStreamNumber), field2 = 0)
+        writeXrefStreamEntry(supplementalEntries, type = 1, field1 = xrefStreamOffset, field2 = 0)
+        val supplementalBytes = supplementalEntries.toByteArray()
+        offsets[xrefStreamNumber] = xrefStreamOffset
+        output.write("$xrefStreamNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size 14 /Root 1 0 R /W [1 4 2] /Index [8 6] /Length ${supplementalBytes.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(supplementalBytes)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        val classicXrefOffset = output.size().toLong()
+        output.write("xref\n0 8\n0000000000 65535 f \n".toByteArray(StandardCharsets.ISO_8859_1))
+        for (objectNumber in 1..7) {
+            output.write(classicXrefEntry(offsets.getValue(objectNumber)))
+        }
+        output.write("12 2\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(classicXrefEntry(offsets.getValue(objectStreamNumber)))
+        output.write(classicXrefEntry(offsets.getValue(xrefStreamNumber)))
+        output.write(
+            "trailer\n<< /Size 14 /Root 1 0 R /XRefStm $xrefStreamOffset >>\nstartxref\n$classicXrefOffset\n%%EOF\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        return output.toByteArray()
+    }
+
+    fun twoPageOutlineWithCompressedReplacementRevision(): ByteArray {
+        val original = twoPageOutline()
+        val previousStartXref = lastStartXref(original)
+        val output = ByteArrayOutputStream()
+        output.write(original)
+
+        val replacement = listOf(
+            9 to "<< /Title (Replacement chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>"
+        )
+        val objectStreamNumber = 12
+        val objectStream = buildObjectStreamBytes(replacement)
+        val objectStreamOffset = output.size().toLong()
+        output.write("$objectStreamNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /ObjStm /N 1 /First ${objectStream.first} /Length ${objectStream.second.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(objectStream.second)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        val xrefStreamNumber = 13
+        val xrefStreamOffset = output.size().toLong()
+        val entries = ByteArrayOutputStream()
+        writeXrefStreamEntry(entries, type = 2, field1 = objectStreamNumber.toLong(), field2 = 0)
+        writeXrefStreamEntry(entries, type = 1, field1 = objectStreamOffset, field2 = 0)
+        writeXrefStreamEntry(entries, type = 1, field1 = xrefStreamOffset, field2 = 0)
+        val xrefBytes = entries.toByteArray()
+        output.write("$xrefStreamNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size 14 /Root 1 0 R /W [1 4 2] /Index [9 1 12 2] /Prev $previousStartXref /Length ${xrefBytes.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(xrefBytes)
+        output.write("\nendstream\nendobj\nstartxref\n$xrefStreamOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
+    fun twoPageOutlineWithTrailingMarkerForPriorRevision(): ByteArray {
+        val incremental = twoPageOutlineWithCompressedReplacementRevision()
+        val text = incremental.toString(StandardCharsets.ISO_8859_1)
+        val priorXref = Regex("startxref\\s+(\\d+)")
+            .findAll(text)
+            .first()
+            .groupValues[1]
+        return incremental +
+            "\n% unrelated trailing bytes\nstartxref\n$priorXref\n%%EOF\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun onePagePdfWithHighCompressedObjectNumber(): ByteArray {
+        val original = helloWorld()
+        val previousStartXref = lastStartXref(original)
+        val output = ByteArrayOutputStream()
+        output.write(original)
+
+        val objectStreamNumber = 12
+        val objectStream = buildObjectStreamBytes(listOf(50 to "<< /Unused true >>"))
+        val objectStreamOffset = output.size().toLong()
+        output.write("$objectStreamNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /ObjStm /N 1 /First ${objectStream.first} /Length ${objectStream.second.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(objectStream.second)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        val xrefStreamNumber = 13
+        val xrefStreamOffset = output.size().toLong()
+        val entries = ByteArrayOutputStream()
+        writeXrefStreamEntry(entries, type = 1, field1 = objectStreamOffset, field2 = 0)
+        writeXrefStreamEntry(entries, type = 1, field1 = xrefStreamOffset, field2 = 0)
+        writeXrefStreamEntry(entries, type = 2, field1 = objectStreamNumber.toLong(), field2 = 0)
+        val xrefBytes = entries.toByteArray()
+        output.write("$xrefStreamNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size 51 /Root 1 0 R /W [1 4 2] /Index [12 2 50 1] /Prev $previousStartXref /Length ${xrefBytes.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(xrefBytes)
+        output.write("\nendstream\nendobj\nstartxref\n$xrefStreamOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
+    fun onePagePdfWithExhaustedObjectNumberSpace(): ByteArray {
+        val original = helloWorld()
+        val text = original.toString(StandardCharsets.ISO_8859_1)
+        return text.replace("/Size 6 ", "/Size 2147483647 ")
+            .toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun pdfWithMalformedCatalogStreamSyntax(): ByteArray = buildPdfObjects(
+        listOf(
+            "<< /Type /Catalog /Pages 2 0 R /Length 0 >>\nstreamX\nendstream",
+            "<< /Type /Pages /Count 0 >>",
+        )
+    )
+
+    fun twoPageOutlineWithOversizedDeclaredObjectStreamLength(): ByteArray =
+        twoPageOutlineWithXrefAndObjectStreams(objectStreamDeclaredLengthOverride = 1024 * 1024)
+
+    fun twoPageOutlineWithExcessiveObjectStreamCount(): ByteArray =
+        twoPageOutlineWithXrefAndObjectStreams(
+            objectStreamDeclaredCountOverride = 100_001,
+            objectStreamTrailingBytes = 256 * 1024,
+        )
+
+    fun twoPageOutlineWithXrefAndObjectStreams(
+        objectStreamDeclaredLengthOverride: Int? = null,
+        objectStreamDeclaredCountOverride: Int? = null,
+        objectStreamTrailingBytes: Int = 0,
+    ): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithCompressedOutline(
+            regularObjects = listOf(
+                1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                2 to "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                3 to "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                4 to pageOneContent,
+                5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                6 to "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                7 to pageTwoContent,
+            ),
+            compressedObjects = listOf(
+                8 to "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                9 to "<< /Title (Compressed chapter 1) /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
+                10 to "<< /Title (Compressed chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                11 to "<< /Title (Compressed section) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
+            ),
+            objectStreamDeclaredLengthOverride = objectStreamDeclaredLengthOverride,
+            objectStreamDeclaredCountOverride = objectStreamDeclaredCountOverride,
+            objectStreamTrailingBytes = objectStreamTrailingBytes,
+        )
+    }
+
+    fun pdfWithExcessiveXrefEntryCount(): ByteArray {
+        val output = ByteArrayOutputStream()
+        val entryCount = 100_001
+        output.write("%PDF-1.5\n%âãÏÓ\n".toByteArray(StandardCharsets.ISO_8859_1))
+        val xrefOffset = output.size().toLong()
+        output.write("1 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size $entryCount /Root 1 0 R /W [0 1 0] /Index [0 $entryCount] /Length $entryCount >>\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(ByteArray(entryCount))
+        output.write("\nendstream\nendobj\nstartxref\n$xrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
+    fun twoPageOutlineWithMismatchedCompressedObjectIndex(): ByteArray =
+        buildPdfObjectsWithCompressedOutline(
+            regularObjects = listOf(
+                1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                2 to "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3 to "<< /Type /Page /Parent 2 0 R >>",
+                4 to "<< /Unused true >>",
+                5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                6 to "<< /Unused true >>",
+                7 to "<< /Unused true >>",
+            ),
+            compressedObjects = listOf(
+                8 to "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                9 to "<< /Title (Wrong slot chapter) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                10 to "<< /Title (Other slot chapter) /Parent 8 0 R /Dest [3 0 R /Fit] /Prev 9 0 R >>",
+                11 to "<< /Unused true >>",
+            ),
+            compressedIndexOverrides = mapOf(9 to 2),
+        )
+
+    fun twoPageOutlineWithMismatchedObjectStreamHeader(): ByteArray =
+        buildPdfObjectsWithCompressedOutline(
+            regularObjects = listOf(
+                1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                2 to "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3 to "<< /Type /Page /Parent 2 0 R >>",
+                4 to "<< /Unused true >>",
+                5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                6 to "<< /Unused true >>",
+                7 to "<< /Unused true >>",
+            ),
+            compressedObjects = listOf(
+                8 to "<< /Type /Outlines /First 9 0 R /Last 9 0 R /Count 1 >>",
+                9 to "<< /Title (Wrong container chapter) /Parent 8 0 R /Dest [3 0 R /Fit] >>",
+                10 to "<< /Unused true >>",
+                11 to "<< /Unused true >>",
+            ),
+            objectStreamHeaderNumber = 14,
+        )
+
+    fun twoPageOutlineWithFlateXrefAndObjectStreams(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithCompressedOutline(
+            regularObjects = listOf(
+                1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                2 to "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                3 to "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                4 to pageOneContent,
+                5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+                6 to "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                7 to pageTwoContent,
+            ),
+            compressedObjects = listOf(
+                8 to "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                9 to "<< /Title (Compressed chapter 1) /Parent 8 0 R /Dest [3 0 R /XYZ null null null] /Next 10 0 R /First 11 0 R /Last 11 0 R /Count 1 >>",
+                10 to "<< /Title (Compressed chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                11 to "<< /Title (Compressed section) /Parent 9 0 R /Dest [6 0 R /Fit] >>",
+            ),
+            flateObjectStream = true,
+            flateXrefStream = true,
         )
     }
 
@@ -171,7 +794,7 @@ internal object SyntheticPdfBuilder {
         // trailer
         val trailerBuilder = StringBuilder()
         if (singleLineTrailer) {
-            trailerBuilder.append("trailer << /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
+            trailerBuilder.append("trailer<< /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
         } else {
             trailerBuilder.append("trailer\n")
             trailerBuilder.append("<< /Size $totalObjects /Root 1 0 R$trailerEncryptEntry >>\n")
@@ -224,6 +847,244 @@ internal object SyntheticPdfBuilder {
         }
         output.write(trailer.toByteArray(StandardCharsets.ISO_8859_1))
         return output.toByteArray()
+    }
+
+    private fun buildPdfObjectsWithXrefStream(
+        objects: List<String>,
+        pngPredictor: Int? = null,
+        declaredField1Width: Int = 4,
+        encodedField1Width: Int = declaredField1Width,
+        streamPrelude: String = "",
+        declaredLengthOverride: Int? = null,
+        flateXref: Boolean = false,
+        corruptFlateXref: Boolean = false,
+        trailingDecodedXrefBytes: Int = 0,
+    ): ByteArray {
+        val output = ByteArrayOutputStream()
+        val offsets = mutableListOf<Long>()
+        output.write("%PDF-1.5\n%âãÏÓ\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        objects.forEachIndexed { index, body ->
+            offsets += output.size().toLong()
+            output.write("${index + 1} 0 obj\n$body\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        }
+
+        val xrefObjectNumber = objects.size + 1
+        val xrefOffset = output.size().toLong()
+        val totalObjects = xrefObjectNumber + 1
+        val xrefEntries = ByteArrayOutputStream()
+        writeXrefStreamEntry(
+            xrefEntries,
+            type = 0,
+            field1 = 0,
+            field2 = 65535,
+            field1Width = encodedField1Width,
+        )
+        offsets.forEach { objectOffset ->
+            writeXrefStreamEntry(
+                xrefEntries,
+                type = 1,
+                field1 = objectOffset,
+                field2 = 0,
+                field1Width = encodedField1Width,
+            )
+        }
+        writeXrefStreamEntry(
+            xrefEntries,
+            type = 1,
+            field1 = xrefOffset,
+            field2 = 0,
+            field1Width = encodedField1Width,
+        )
+        val rawXrefBytes = xrefEntries.toByteArray() + ByteArray(trailingDecodedXrefBytes)
+        var xrefBytes = if (pngPredictor != null) {
+            deflate(encodePngUpRows(rawXrefBytes, rowBytes = 7))
+        } else if (flateXref) {
+            deflate(rawXrefBytes)
+        } else {
+            rawXrefBytes
+        }
+        if (corruptFlateXref && xrefBytes.isNotEmpty()) {
+            xrefBytes = xrefBytes.copyOf((xrefBytes.size - 2).coerceAtLeast(1))
+        }
+        val filterEntries = if (pngPredictor != null) {
+            " /Filter /FlateDecode /DecodeParms << /Predictor $pngPredictor /Columns 7 /Colors 1 /BitsPerComponent 8 >>"
+        } else if (flateXref) {
+            " /Filter /FlateDecode"
+        } else {
+            ""
+        }
+        val declaredLength = declaredLengthOverride ?: xrefBytes.size
+
+        output.write("$xrefObjectNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size $totalObjects /Root 1 0 R /W [1 $declaredField1Width 2] /Index [0 $totalObjects] /Length $declaredLength$filterEntries >>\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(streamPrelude.toByteArray(StandardCharsets.ISO_8859_1))
+        output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(xrefBytes)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write("startxref\n$xrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
+    private fun buildPdfObjectsWithCompressedOutline(
+        regularObjects: List<Pair<Int, String>>,
+        compressedObjects: List<Pair<Int, String>>,
+        flateObjectStream: Boolean = false,
+        flateXrefStream: Boolean = false,
+        objectStreamPrelude: String = "",
+        compressedIndexOverrides: Map<Int, Int> = emptyMap(),
+        objectStreamHeaderNumber: Int = 12,
+        objectStreamDeclaredLengthOverride: Int? = null,
+        objectStreamDeclaredCountOverride: Int? = null,
+        objectStreamTrailingBytes: Int = 0,
+    ): ByteArray {
+        val output = ByteArrayOutputStream()
+        val objectOffsets = linkedMapOf<Int, Long>()
+        output.write("%PDF-1.5\n%âãÏÓ\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        regularObjects.forEach { (objectNumber, body) ->
+            objectOffsets[objectNumber] = output.size().toLong()
+            output.write("$objectNumber 0 obj\n$body\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        }
+
+        val objectStreamNumber = 12
+        val objectStreamBytes = buildObjectStreamBytes(compressedObjects)
+        val objectStreamDecodedBytes = objectStreamBytes.second + ByteArray(objectStreamTrailingBytes)
+        val objectStreamPayload = if (flateObjectStream) deflate(objectStreamDecodedBytes) else objectStreamDecodedBytes
+        val objectStreamFilter = if (flateObjectStream) " /Filter /FlateDecode" else ""
+        val objectStreamDeclaredLength = objectStreamDeclaredLengthOverride ?: objectStreamPayload.size
+        val objectStreamDeclaredCount = objectStreamDeclaredCountOverride ?: compressedObjects.size
+        objectOffsets[objectStreamNumber] = output.size().toLong()
+        output.write("$objectStreamHeaderNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /ObjStm /N $objectStreamDeclaredCount /First ${objectStreamBytes.first} /Length $objectStreamDeclaredLength$objectStreamFilter >>\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(objectStreamPrelude.toByteArray(StandardCharsets.ISO_8859_1))
+        output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(objectStreamPayload)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+        val xrefObjectNumber = 13
+        val xrefOffset = output.size().toLong()
+        val totalObjects = xrefObjectNumber + 1
+        val xrefEntries = ByteArrayOutputStream()
+        writeXrefStreamEntry(xrefEntries, type = 0, field1 = 0, field2 = 65535)
+        for (objectNumber in 1 until xrefObjectNumber) {
+            val regularOffset = objectOffsets[objectNumber]
+            if (regularOffset != null) {
+                writeXrefStreamEntry(xrefEntries, type = 1, field1 = regularOffset, field2 = 0)
+            } else {
+                val compressedIndex = compressedObjects.indexOfFirst { it.first == objectNumber }
+                require(compressedIndex >= 0) { "missing test object $objectNumber" }
+                writeXrefStreamEntry(
+                    xrefEntries,
+                    type = 2,
+                    field1 = objectStreamNumber.toLong(),
+                    field2 = compressedIndexOverrides[objectNumber] ?: compressedIndex,
+                )
+            }
+        }
+        writeXrefStreamEntry(xrefEntries, type = 1, field1 = xrefOffset, field2 = 0)
+        val rawXrefBytes = xrefEntries.toByteArray()
+        val xrefBytes = if (flateXrefStream) deflate(rawXrefBytes) else rawXrefBytes
+        val xrefStreamFilter = if (flateXrefStream) " /Filter /FlateDecode" else ""
+
+        output.write("$xrefObjectNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size $totalObjects /Root 1 0 R /W [1 4 2] /Index [0 $totalObjects] /Length ${xrefBytes.size}$xrefStreamFilter >>\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(xrefBytes)
+        output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write("startxref\n$xrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
+    private fun buildObjectStreamBytes(objects: List<Pair<Int, String>>): Pair<Int, ByteArray> {
+        val bodies = objects.map { (_, body) -> body.toByteArray(StandardCharsets.ISO_8859_1) }
+        var offset = 0
+        val offsets = bodies.map { body ->
+            val current = offset
+            offset += body.size + 1
+            current
+        }
+        val header = objects.mapIndexed { index, (objectNumber, _) ->
+            "$objectNumber ${offsets[index]}"
+        }.joinToString(separator = " ", postfix = " ")
+        val headerBytes = header.toByteArray(StandardCharsets.ISO_8859_1)
+        val output = ByteArrayOutputStream()
+        output.write(headerBytes)
+        bodies.forEachIndexed { index, body ->
+            if (index > 0) output.write(' '.code)
+            output.write(body)
+        }
+        return headerBytes.size to output.toByteArray()
+    }
+
+    private fun writeXrefStreamEntry(
+        output: ByteArrayOutputStream,
+        type: Int,
+        field1: Long,
+        field2: Int,
+        field1Width: Int = 4,
+    ) {
+        output.write(type)
+        for (byteIndex in field1Width - 1 downTo 0) {
+            output.write(((field1 shr (byteIndex * 8)) and 0xff).toInt())
+        }
+        output.write((field2 shr 8) and 0xff)
+        output.write(field2 and 0xff)
+    }
+
+    private fun writeWideTypeXrefStreamEntry(
+        output: ByteArrayOutputStream,
+        type: Long,
+        field1: Long,
+        field2: Int,
+    ) {
+        for (byteIndex in 7 downTo 0) {
+            output.write(((type shr (byteIndex * 8)) and 0xff).toInt())
+        }
+        for (byteIndex in 3 downTo 0) {
+            output.write(((field1 shr (byteIndex * 8)) and 0xff).toInt())
+        }
+        output.write((field2 shr 8) and 0xff)
+        output.write(field2 and 0xff)
+    }
+
+    private fun encodePngUpRows(bytes: ByteArray, rowBytes: Int): ByteArray {
+        require(rowBytes > 0 && bytes.size % rowBytes == 0)
+        val rowCount = bytes.size / rowBytes
+        val encoded = ByteArray(rowCount * (rowBytes + 1))
+        for (row in 0 until rowCount) {
+            val sourceStart = row * rowBytes
+            val targetStart = row * (rowBytes + 1)
+            encoded[targetStart] = 2
+            for (column in 0 until rowBytes) {
+                val index = sourceStart + column
+                val previous = if (row > 0) bytes[index - rowBytes].toInt() and 0xff else 0
+                encoded[targetStart + 1 + column] = ((bytes[index].toInt() and 0xff) - previous).toByte()
+            }
+        }
+        return encoded
+    }
+
+    private fun classicXrefEntry(offset: Long): ByteArray =
+        "${offset.toString().padStart(10, '0')} 00000 n \n".toByteArray(StandardCharsets.ISO_8859_1)
+
+    private fun lastStartXref(bytes: ByteArray): Long {
+        val text = bytes.toString(StandardCharsets.ISO_8859_1)
+        val marker = text.lastIndexOf("startxref")
+        require(marker >= 0)
+        return text.substring(marker + "startxref".length)
+            .trimStart()
+            .takeWhile(Char::isDigit)
+            .toLong()
     }
 
     private fun deflate(input: ByteArray): ByteArray {

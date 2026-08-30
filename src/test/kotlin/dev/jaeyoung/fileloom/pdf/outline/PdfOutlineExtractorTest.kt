@@ -1,12 +1,101 @@
 package dev.jaeyoung.fileloom.pdf.outline
 
 import dev.jaeyoung.fileloom.pdf.source.ByteArrayPdfByteSource
+import dev.jaeyoung.fileloom.pdf.source.PdfByteSource
 import dev.jaeyoung.fileloom.pdf.text.SyntheticPdfBuilder
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PdfOutlineExtractorTest {
+
+    @Test
+    fun opensOutlineWhenStartXrefIsBeyondLegacyTailWindow() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(
+                SyntheticPdfBuilder.twoPageOutlineWithTrailingBytes(8 * 1024)
+            )
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Chapter 1", "Chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
+    fun findsStartXrefWhenMarkerCrossesAWindowBoundary() {
+        val bytes = SyntheticPdfBuilder.twoPageOutlineWithStartXrefDistanceFromEof(
+            64 * 1024 + 4
+        )
+        val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(bytes))
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(2, it.extractTableOfContents().size)
+        }
+    }
+
+    @Test
+    fun refusesToScanBeyondOneMiBTailBudget() {
+        val bytes = SyntheticPdfBuilder.twoPageOutlineWithStartXrefDistanceFromEof(
+            1024 * 1024 + 256
+        )
+
+        assertNull(PdfOutlineExtractor.open(ByteArrayPdfByteSource(bytes)))
+    }
+
+    @Test
+    fun skipsTrailingStartXrefTextThatDoesNotPointToAnXrefStructure() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingBogusStartXref())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
+
+    @Test
+    fun skipsTrailingStartXrefTargetThatOnlyStartsWithXrefText() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingXrefPrefixTarget())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
+
+    @Test
+    fun skipsTrailingStartXrefTargetWhoseXrefTableCannotBeParsed() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingUnparseableXrefTarget())
+        )
+        assertNotNull(extractor)
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
+
+    @Test
+    fun skipsTrailingStartXrefTargetThatOnlyPrefixesTrailerKeyword() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingTrailerKeywordPrefix())
+        )
+        assertNotNull(extractor)
+        extractor.use {
+            assertEquals(listOf("Chapter 1", "Chapter 2"), it.extractTableOfContents().map(PdfTocEntry::title))
+        }
+    }
 
     @Test
     fun extractsNestedOutlineTreeWithPageIndexes() {
@@ -21,6 +110,26 @@ class PdfOutlineExtractorTest {
                 PdfTocEntry("Section 1.1", pageIndex = 1)
             )), toc[0])
             assertEquals(PdfTocEntry("Chapter 2", pageIndex = 1), toc[1])
+        }
+    }
+
+    @Test
+    fun extractsOutlineEntriesWhoseTitlesAreIndirectStringObjects() {
+        val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithIndirectTitles()))
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Indirect chapter 1", pageIndex = 0, children = listOf(
+                        PdfTocEntry("Indirect section", pageIndex = 1)
+                    )),
+                    PdfTocEntry("Indirect chapter 2", pageIndex = 1),
+                ),
+                toc
+            )
         }
     }
 
@@ -62,5 +171,325 @@ class PdfOutlineExtractorTest {
                 toc
             )
         }
+    }
+
+    @Test
+    fun extractsOutlineFromXrefStreamPdf() {
+        val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithXrefStream()))
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Chapter 1", pageIndex = 0, children = listOf(
+                        PdfTocEntry("Section 1.1", pageIndex = 1)
+                    )),
+                    PdfTocEntry("Chapter 2", pageIndex = 1),
+                ),
+                toc
+            )
+        }
+    }
+
+    @Test
+    fun extractsOutlineFromPngUpPredictedXrefStream() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithPngUpPredictedXrefStream())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Predicted chapter 1", "Predicted chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
+    fun oversizedXrefStreamLengthIsRejectedBeforeLargeRead() {
+        val source = TrackingPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithOversizedDeclaredXrefLength())
+
+        assertNull(PdfOutlineExtractor.open(source))
+        assertTrue(source.maxRequestedBytes.get() < 1024 * 1024)
+    }
+
+    @Test
+    fun corruptFlateXrefStreamIsRejectedInsteadOfUsingPartialOutput() {
+        assertNull(
+            PdfOutlineExtractor.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCorruptFlateXrefStream())
+            )
+        )
+    }
+
+    @Test
+    fun inflatedXrefStreamCannotDecodePastDeclaredEntryLayout() {
+        assertNull(
+            PdfOutlineExtractor.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithInflatedXrefPadding())
+            )
+        )
+    }
+
+    @Test
+    fun rejectsXrefStreamFieldWidthThatCannotFitInLong() {
+        assertNull(
+            PdfOutlineExtractor.open(
+                ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithOversizedDeclaredXrefWidth())
+            )
+        )
+    }
+
+    @Test
+    fun unknownWideXrefEntryTypeDoesNotNarrowIntoKnownType() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithUnknownWideXrefEntryType())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(emptyList(), it.extractTableOfContents())
+        }
+    }
+
+    @Test
+    fun malformedStreamHeaderFailsSoftlyDuringReferenceResolution() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.pdfWithMalformedCatalogStreamSyntax())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(emptyList(), it.extractTableOfContents())
+        }
+    }
+
+    @Test
+    fun locatesXrefStreamKeywordAfterCommentsAndLongWhitespace() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCommentBeforeXrefStreamKeyword())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Comment chapter 1", "Comment chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
+    fun locatesObjectStreamKeywordAfterCommentsAndLongWhitespace() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCommentBeforeObjectStreamKeyword())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Object stream chapter 1", "Object stream chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
+    fun extractsCompressedOutlineFromHybridXrefStream() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithHybridXref())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Hybrid chapter 1", "Hybrid chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
+    fun newestCompressedRevisionSupersedesOlderRegularObject() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCompressedReplacementRevision())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals("Replacement chapter 1", it.extractTableOfContents().first().title)
+        }
+    }
+
+    @Test
+    fun trailingMarkerForPriorRevisionDoesNotHideLatestRevision() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingMarkerForPriorRevision())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals("Replacement chapter 1", it.extractTableOfContents().first().title)
+        }
+    }
+
+    @Test
+    fun extractsOutlineObjectsStoredInObjectStream() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithXrefAndObjectStreams())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Compressed chapter 1", pageIndex = 0, children = listOf(
+                        PdfTocEntry("Compressed section", pageIndex = 1)
+                    )),
+                    PdfTocEntry("Compressed chapter 2", pageIndex = 1),
+                ),
+                toc
+            )
+        }
+    }
+
+    @Test
+    fun oversizedObjectStreamLengthIsRejectedBeforeLargeRead() {
+        val source = TrackingPdfByteSource(
+            SyntheticPdfBuilder.twoPageOutlineWithOversizedDeclaredObjectStreamLength()
+        )
+        val extractor = PdfOutlineExtractor.open(source)
+        assertNotNull(extractor)
+
+        extractor.use { it.extractTableOfContents() }
+
+        assertTrue(source.maxRequestedBytes.get() < 1024 * 1024)
+    }
+
+    @Test
+    fun excessiveObjectStreamCountIsRejectedBeforePayloadRead() {
+        val source = TrackingPdfByteSource(
+            SyntheticPdfBuilder.twoPageOutlineWithExcessiveObjectStreamCount()
+        )
+        val extractor = PdfOutlineExtractor.open(source)
+        assertNotNull(extractor)
+
+        extractor.use { it.extractTableOfContents() }
+
+        assertTrue(source.maxRequestedBytes.get() < 128 * 1024)
+    }
+
+    @Test
+    fun compressedObjectResolutionHonorsDeclaredObjectStreamIndex() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithMismatchedCompressedObjectIndex())
+        )
+        assertNotNull(extractor)
+        extractor.use { assertEquals(emptyList(), it.extractTableOfContents()) }
+    }
+
+    @Test
+    fun objectStreamHeaderMustMatchItsRegularXrefIdentity() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithMismatchedObjectStreamHeader())
+        )
+        assertNotNull(extractor)
+        extractor.use { assertEquals(emptyList(), it.extractTableOfContents()) }
+    }
+
+    @Test
+    fun extractsOutlineFromFlateEncodedXrefAndObjectStreams() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithFlateXrefAndObjectStreams())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Compressed chapter 1", pageIndex = 0, children = listOf(
+                        PdfTocEntry("Compressed section", pageIndex = 1)
+                    )),
+                    PdfTocEntry("Compressed chapter 2", pageIndex = 1),
+                ),
+                toc
+            )
+        }
+    }
+
+    @Test
+    fun resolvesNamedPageActionsWithoutTreatingRemoteActionsAsLocalPages() {
+        val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithNamedActions()))
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(
+                    PdfTocEntry("First page action", pageIndex = 0),
+                    PdfTocEntry("Last page action", pageIndex = 1),
+                    PdfTocEntry("Remote action", pageIndex = null),
+                ),
+                toc
+            )
+        }
+    }
+
+    @Test
+    fun resolvesNamedPageActionsWhoseNamesAreIndirectObjects() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithIndirectNamedActions())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf(
+                    PdfTocEntry("Indirect first page action", pageIndex = 0),
+                    PdfTocEntry("Indirect last page action", pageIndex = 1),
+                ),
+                it.extractTableOfContents(),
+            )
+        }
+    }
+
+    @Test
+    fun clampsIntegerPageDestinationsToExistingPages() {
+        val extractor = PdfOutlineExtractor.open(ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithOutOfRangeIntegerDestination()))
+        assertNotNull(extractor)
+
+        extractor.use {
+            val toc = it.extractTableOfContents()
+
+            assertEquals(
+                listOf(PdfTocEntry("Clamped chapter", pageIndex = 1)),
+                toc
+            )
+        }
+    }
+
+    private class TrackingPdfByteSource(
+        private val bytes: ByteArray,
+    ) : PdfByteSource {
+        override val length: Long = bytes.size.toLong()
+        val maxRequestedBytes = AtomicInteger()
+
+        override fun read(position: Long, sink: ByteArray, offset: Int, byteCount: Int): Int {
+            maxRequestedBytes.accumulateAndGet(byteCount, ::maxOf)
+            if (position >= bytes.size) return -1
+            val count = minOf(byteCount, bytes.size - position.toInt())
+            bytes.copyInto(sink, offset, position.toInt(), position.toInt() + count)
+            return count
+        }
+
+        override fun close() = Unit
     }
 }

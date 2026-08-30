@@ -5,7 +5,7 @@ PDF text, outline, and annotation core library for Fileloom.
 Coordinates:
 
 ```kotlin
-implementation("dev.jaeyoung:fileloom-pdf-core:0.2.0")
+implementation("dev.jaeyoung:fileloom-pdf-core:0.2.8")
 ```
 
 ## Goal
@@ -16,6 +16,8 @@ Provide a pure Kotlin/JVM layer that consumes a PDF and exposes reader-focused m
 2. Feed the EPUB TTS engine arbitrary `String` content for "read aloud" on PDFs.
 3. Show PDF outline trees as a table of contents.
 4. Export Fileloom's persisted highlights and sticky notes as standard PDF annotations.
+5. Share small renderer policy primitives so the app can keep Android
+   `PdfRenderer` work bounded, bucketed, and measurable.
 
 This remains intentionally small: Fileloom still renders pages with Android `PdfRenderer`, while this library handles the metadata and write-back paths that the platform renderer does not expose consistently.
 
@@ -31,18 +33,19 @@ In scope:
 - **ToUnicode CMap** parser (`bfchar` + `bfrange` entries). This is the load-bearing piece — without it, glyph codes don't map back to readable Unicode.
 - Standard-14 encoding fallback (`WinAnsiEncoding`, `MacRomanEncoding`, `StandardEncoding`).
 - Heuristic reading-order: top-to-bottom by Y, left-to-right by X within a line band.
-- Outline extraction: walks `/Outlines` linked lists, preserves nested children, and resolves direct page destinations to zero-based page indexes.
+- Outline extraction: walks `/Outlines` linked lists, preserves nested children, resolves named/internal actions, supports classic, hybrid, and predictor-encoded PDF 1.5 xref/object streams with revision-aware xref merging, and applies bounded trailing-data outline recovery across the final 1 MiB without changing the extractor API.
 - Incremental annotation export: appends Highlight and Text/sticky-note annotation objects, updates page `/Annots`, preserves the original bytes, and links the new xref to the previous one with `/Prev`.
+- Render policy primitives: stable width buckets, safe render dimensions, fallback widths, request keys, tile keys, priority reasons, and telemetry event models. The Android renderer and coroutine scheduler remain app-side.
 
 Explicitly **out of scope** for v0.2:
 
 - Encrypted PDFs (use `dev.jaeyoung:fileloom-pdf-security-core` first to decrypt to a plaintext temp file).
-- Cross-reference streams (PDF 1.5+ binary xref). The dependency `fileloom-pdf-parser-core:0.3.0` only handles classic xref tables; PDFs that use xref streams will be skipped with a graceful empty result.
 - LZW/CCITT/JBIG2/DCT filters.
 - Embedded-font glyph rendering (we only need glyph code -> Unicode, never code -> shape).
 - OCR for scanned/image-only PDFs.
 - Text formatting preservation (paragraphs, columns, tables). Output is plain text in approximate reading order.
 - Full annotation editing, ink/stylus pressure, underline/strikethrough export, form filling, and optional-content/layer browser support.
+- Android `PdfRenderer` ownership, bitmap allocation, coroutine scheduling, and clipped/tile rendering execution.
 
 ## Reference research
 
@@ -62,7 +65,7 @@ Per the Fileloom in-house library policy, the design borrows from these referenc
 - **Two-pass reading order: collect (x,y,text) tuples, then bucket by line band** — PDFBox's `PDFTextStripper` strategy.
 - **ToUnicode fallback chain** (ToUnicode → embedded font encoding → standard-14 named encoding → raw byte) — pdf.js `core/evaluator.js`.
 - **CMap `bfrange` with array form (`<0001> <0003> [<...> <...> <...>]`)** — both pdf.js and MuPDF handle this; we model the same.
-- **Skip cross-reference streams gracefully** — borrows the "fail soft, return empty text" stance from PdfBox-Android in handling unsupported PDF variants.
+- **Fail softly on unsupported PDF variants** — borrows the "return empty text" stance from PdfBox-Android for encrypted files, malformed structures, or streams whose filters are outside this lightweight parser's scope.
 
 ## Layering
 
@@ -78,6 +81,9 @@ We add on top:
 - `dev.jaeyoung.fileloom.pdf.text.PdfTextExtractor` — public entry point.
 - `dev.jaeyoung.fileloom.pdf.outline.PdfOutlineExtractor` — outline / TOC entry point.
 - `dev.jaeyoung.fileloom.pdf.annotation.PdfAnnotationWriter` — incremental Highlight and sticky-note export.
+- `dev.jaeyoung.fileloom.pdf.render.PdfRenderPolicy` — pure render sizing and cache-key policy.
+- `dev.jaeyoung.fileloom.pdf.render.PdfRenderRequest` — pure render request/key model.
+- `dev.jaeyoung.fileloom.pdf.render.PdfRenderTelemetryEvent` — pure render measurement model.
 - `dev.jaeyoung.fileloom.pdf.text.internal.*` — content stream + font + CMap.
 
 ## Public API
