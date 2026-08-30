@@ -208,6 +208,21 @@ class PdfOutlineExtractorTest {
     }
 
     @Test
+    fun locatesObjectStreamKeywordAfterCommentsAndLongWhitespace() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCommentBeforeObjectStreamKeyword())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(
+                listOf("Object stream chapter 1", "Object stream chapter 2"),
+                it.extractTableOfContents().map(PdfTocEntry::title),
+            )
+        }
+    }
+
+    @Test
     fun extractsCompressedOutlineFromHybridXrefStream() {
         val extractor = PdfOutlineExtractor.open(
             ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithHybridXref())
@@ -226,6 +241,18 @@ class PdfOutlineExtractorTest {
     fun newestCompressedRevisionSupersedesOlderRegularObject() {
         val extractor = PdfOutlineExtractor.open(
             ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCompressedReplacementRevision())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals("Replacement chapter 1", it.extractTableOfContents().first().title)
+        }
+    }
+
+    @Test
+    fun trailingMarkerForPriorRevisionDoesNotHideLatestRevision() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithTrailingMarkerForPriorRevision())
         )
         assertNotNull(extractor)
 

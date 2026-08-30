@@ -39,6 +39,19 @@ class PdfRenderPolicyTest {
     }
 
     @Test
+    fun roundedRenderHeightCannotExceedPixelCap() {
+        val dimensions = requireNotNull(
+            PdfRenderPolicy.safeRenderDimensions(
+                requestedWidth = PdfRenderPolicy.MAX_RENDER_WIDTH,
+                pageWidth = 4,
+                pageHeight = 7,
+            )
+        )
+
+        assertTrue(dimensions.first.toLong() * dimensions.second.toLong() <= PdfRenderPolicy.MAX_RENDER_PIXELS)
+    }
+
+    @Test
     fun normalPageDimensionsAreAccepted() {
         assertNotNull(PdfRenderPolicy.safeRenderDimensions(1080, pageWidth = 612, pageHeight = 792))
     }

@@ -288,6 +288,29 @@ internal object SyntheticPdfBuilder {
         )
     }
 
+    fun twoPageOutlineWithCommentBeforeObjectStreamKeyword(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        return buildPdfObjectsWithCompressedOutline(
+            regularObjects = listOf(
+                1 to "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+                2 to "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+                3 to "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+                4 to pageOneContent,
+                5 to "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                6 to "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+                7 to pageTwoContent,
+            ),
+            compressedObjects = listOf(
+                8 to "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+                9 to "<< /Title (Object stream chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+                10 to "<< /Title (Object stream chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+                11 to "<< /Unused true >>",
+            ),
+            objectStreamPrelude = "% delayed object stream keyword\n${" ".repeat(80)}",
+        )
+    }
+
     fun twoPageOutlineWithHybridXref(): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
@@ -393,6 +416,18 @@ internal object SyntheticPdfBuilder {
         output.write(xrefBytes)
         output.write("\nendstream\nendobj\nstartxref\n$xrefStreamOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
         return output.toByteArray()
+    }
+
+    fun twoPageOutlineWithTrailingMarkerForPriorRevision(): ByteArray {
+        val incremental = twoPageOutlineWithCompressedReplacementRevision()
+        val text = incremental.toString(StandardCharsets.ISO_8859_1)
+        val priorXref = Regex("startxref\\s+(\\d+)")
+            .findAll(text)
+            .first()
+            .groupValues[1]
+        return incremental +
+            "\n% unrelated trailing bytes\nstartxref\n$priorXref\n%%EOF\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
     }
 
     fun onePagePdfWithHighCompressedObjectNumber(): ByteArray {
@@ -676,6 +711,7 @@ internal object SyntheticPdfBuilder {
         compressedObjects: List<Pair<Int, String>>,
         flateObjectStream: Boolean = false,
         flateXrefStream: Boolean = false,
+        objectStreamPrelude: String = "",
     ): ByteArray {
         val output = ByteArrayOutputStream()
         val objectOffsets = linkedMapOf<Int, Long>()
@@ -696,6 +732,7 @@ internal object SyntheticPdfBuilder {
             "<< /Type /ObjStm /N ${compressedObjects.size} /First ${objectStreamBytes.first} /Length ${objectStreamPayload.size}$objectStreamFilter >>\n"
                 .toByteArray(StandardCharsets.ISO_8859_1)
         )
+        output.write(objectStreamPrelude.toByteArray(StandardCharsets.ISO_8859_1))
         output.write("stream\n".toByteArray(StandardCharsets.ISO_8859_1))
         output.write(objectStreamPayload)
         output.write("\nendstream\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
