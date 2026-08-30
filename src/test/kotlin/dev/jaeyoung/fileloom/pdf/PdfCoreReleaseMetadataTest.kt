@@ -6,13 +6,14 @@ import kotlin.test.assertTrue
 
 class PdfCoreReleaseMetadataTest {
     @Test
-    fun releaseMetadataTargetsOutlineRecoveryVersion() {
+    fun releaseMetadataTargetsReviewHardenedVersion() {
         val properties = findRepositoryFile("gradle.properties").readText()
         val readme = findRepositoryFile("README.md").readText()
 
-        assertTrue(properties.lineSequence().any { it == "version=0.2.7" })
-        assertTrue(readme.contains("fileloom-pdf-core:0.2.7"))
+        assertTrue(properties.lineSequence().any { it == "version=0.2.8" })
+        assertTrue(readme.contains("fileloom-pdf-core:0.2.8"))
         assertTrue(readme.contains("bounded trailing-data outline recovery"))
+        assertTrue(readme.contains("revision-aware xref merging"))
     }
 
     private fun findRepositoryFile(relativePath: String): File {
