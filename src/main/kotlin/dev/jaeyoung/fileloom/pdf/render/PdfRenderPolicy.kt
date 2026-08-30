@@ -29,7 +29,7 @@ object PdfRenderPolicy {
         candidates += (width * 0.55f).roundToInt().coerceAtLeast(MIN_FALLBACK_WIDTH)
         candidates += (width * 0.4f).roundToInt().coerceAtLeast(MIN_FALLBACK_WIDTH)
         candidates += MIN_FALLBACK_WIDTH
-        return candidates.toList()
+        return candidates.filter { it <= width }
     }
 
     fun safeRenderDimensions(

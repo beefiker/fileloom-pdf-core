@@ -66,6 +66,17 @@ internal class PdfDocument internal constructor(
         return if (value is PdfObject.Reference) resolve(value) else value
     }
 
+    internal fun nextAvailableObjectNumber(): Int? {
+        val trailerSize = (trailer.entries["Size"] as? PdfObject.IntegerValue)?.value ?: 0L
+        val regularNext = (xrefEntries.keys.maxOfOrNull(PdfObjectId::objectNumber)?.toLong() ?: 0L) + 1L
+        val compressedNext = (
+            compressedXrefEntries.keys.maxOfOrNull(PdfObjectId::objectNumber)?.toLong() ?: 0L
+            ) + 1L
+        return maxOf(1L, trailerSize, regularNext, compressedNext)
+            .takeIf { it <= Int.MAX_VALUE }
+            ?.toInt()
+    }
+
     private fun loadCompressedObject(
         objectStreamNumber: Int,
         objectNumber: Int,
@@ -163,6 +174,7 @@ internal class PdfDocument internal constructor(
                     count = (readEnd - windowStart).toInt(),
                 ).toString(StandardCharsets.ISO_8859_1)
                 parseLastValidStartXref(
+                    source = source,
                     window = window,
                     windowStart = windowStart,
                     logicalEnd = logicalEnd,
@@ -174,6 +186,7 @@ internal class PdfDocument internal constructor(
         }
 
         private fun parseLastValidStartXref(
+            source: PdfByteSource,
             window: String,
             windowStart: Long,
             logicalEnd: Long,
@@ -191,13 +204,29 @@ internal class PdfDocument internal constructor(
                     while (index < window.length && window[index].isDigit()) index += 1
                     if (numberStart < index) {
                         val offset = window.substring(numberStart, index).toLongOrNull()
-                        if (offset != null && offset in 0 until sourceLength) return offset
+                        if (
+                            offset != null &&
+                            offset in 0 until sourceLength &&
+                            isXrefStructureAt(source, offset)
+                        ) {
+                            return offset
+                        }
                     }
                 }
                 searchFrom = markerIndex - 1
             }
             return null
         }
+
+        private fun isXrefStructureAt(source: PdfByteSource, offset: Long): Boolean = runCatching {
+            if (readByteAt(source, offset) == 'x'.code) {
+                val remaining = source.length - offset
+                remaining >= 4L && readSlice(source, offset, 4).contentEquals("xref".toByteArray())
+            } else {
+                val header = parseIndirectStreamHeader(source, offset) ?: return@runCatching false
+                (header.dictionary.entries["Type"] as? PdfObject.Name)?.value == "XRef"
+            }
+        }.getOrDefault(false)
 
         private fun readXrefAndTrailer(
             source: PdfByteSource,
@@ -279,26 +308,32 @@ internal class PdfDocument internal constructor(
             val trailer = trailerParser.parseObject() as? PdfObject.Dictionary
                 ?: throw PdfParseException("expected trailer dictionary", dictionaryOffset)
 
-            val previousXrefOffset = (trailer.entries["Prev"] as? PdfObject.IntegerValue)?.value
-            if (previousXrefOffset == null) {
-                return ParsedXref(entries, emptyMap(), trailer)
+            var current = ParsedXref(entries, emptyMap(), trailer)
+            val supplementalXrefOffset = (trailer.entries["XRefStm"] as? PdfObject.IntegerValue)?.value
+            if (supplementalXrefOffset != null && visitedOffsets.add(supplementalXrefOffset)) {
+                val supplemental = readXrefStreamAndTrailer(
+                    source = source,
+                    xrefOffset = supplementalXrefOffset,
+                    visitedOffsets = visitedOffsets,
+                    followPrevious = false,
+                )
+                if (supplemental != null) {
+                    current = mergeParsedXref(older = supplemental, newer = current)
+                }
             }
 
+            val previousXrefOffset = (trailer.entries["Prev"] as? PdfObject.IntegerValue)?.value
+                ?: return current
             val previous = readXrefAndTrailer(source, previousXrefOffset, visitedOffsets)
-                ?: return ParsedXref(entries, emptyMap(), trailer)
-            val mergedEntries = linkedMapOf<PdfObjectId, PdfXrefEntry>()
-            mergedEntries.putAll(previous.entries)
-            mergedEntries.putAll(entries)
-            val mergedCompressedEntries = linkedMapOf<PdfObjectId, CompressedXrefEntry>()
-            mergedCompressedEntries.putAll(previous.compressedEntries)
-            val mergedTrailer = PdfObject.Dictionary(previous.trailer.entries + trailer.entries)
-            return ParsedXref(mergedEntries, mergedCompressedEntries, mergedTrailer)
+                ?: return current
+            return mergeParsedXref(older = previous, newer = current)
         }
 
         private fun readXrefStreamAndTrailer(
             source: PdfByteSource,
             xrefOffset: Long,
             visitedOffsets: MutableSet<Long>,
+            followPrevious: Boolean = true,
         ): ParsedXref? {
             val header = parseIndirectStreamHeader(source, xrefOffset) ?: return null
             val trailer = header.dictionary
@@ -350,21 +385,36 @@ internal class PdfDocument internal constructor(
                 generationNumber = header.id.generationNumber,
             )
 
-            val previousXrefOffset = (trailer.entries["Prev"] as? PdfObject.IntegerValue)?.value
-            if (previousXrefOffset == null) {
-                return ParsedXref(entries, compressedEntries, trailer)
-            }
+            val current = ParsedXref(entries, compressedEntries, trailer)
+            if (!followPrevious) return current
 
+            val previousXrefOffset = (trailer.entries["Prev"] as? PdfObject.IntegerValue)?.value
+                ?: return current
             val previous = readXrefAndTrailer(source, previousXrefOffset, visitedOffsets)
-                ?: return ParsedXref(entries, compressedEntries, trailer)
-            val mergedEntries = linkedMapOf<PdfObjectId, PdfXrefEntry>()
-            mergedEntries.putAll(previous.entries)
-            mergedEntries.putAll(entries)
-            val mergedCompressedEntries = linkedMapOf<PdfObjectId, CompressedXrefEntry>()
-            mergedCompressedEntries.putAll(previous.compressedEntries)
-            mergedCompressedEntries.putAll(compressedEntries)
-            val mergedTrailer = PdfObject.Dictionary(previous.trailer.entries + trailer.entries)
-            return ParsedXref(mergedEntries, mergedCompressedEntries, mergedTrailer)
+                ?: return current
+            return mergeParsedXref(older = previous, newer = current)
+        }
+
+        private fun mergeParsedXref(older: ParsedXref, newer: ParsedXref): ParsedXref {
+            val newerObjectNumbers = buildSet {
+                newer.entries.keys.forEach { add(it.objectNumber) }
+                newer.compressedEntries.keys.forEach { add(it.objectNumber) }
+            }
+            val entries = linkedMapOf<PdfObjectId, PdfXrefEntry>()
+            older.entries
+                .filterKeys { it.objectNumber !in newerObjectNumbers }
+                .forEach(entries::put)
+            newer.entries.forEach(entries::put)
+            val compressedEntries = linkedMapOf<PdfObjectId, CompressedXrefEntry>()
+            older.compressedEntries
+                .filterKeys { it.objectNumber !in newerObjectNumbers }
+                .forEach(compressedEntries::put)
+            newer.compressedEntries.forEach(compressedEntries::put)
+            return ParsedXref(
+                entries = entries,
+                compressedEntries = compressedEntries,
+                trailer = PdfObject.Dictionary(older.trailer.entries + newer.trailer.entries),
+            )
         }
 
         private fun parseXrefEntry(line: LineReader.Line): PdfXrefEntry {

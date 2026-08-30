@@ -88,7 +88,7 @@ class PdfOutlineExtractor private constructor(
                 root = root,
                 visitedNames = mutableSetOf(),
             )
-            "Named" -> when (action.entries["N"].destinationName()) {
+            "Named" -> when (document.deref(action.entries["N"]).destinationName()) {
                 "FirstPage" -> coercePageIndex(0)
                 "LastPage" -> coercePageIndex(pageCount - 1)
                 else -> null

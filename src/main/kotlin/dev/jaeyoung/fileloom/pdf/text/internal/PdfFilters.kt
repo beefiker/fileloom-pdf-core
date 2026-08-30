@@ -65,31 +65,109 @@ internal object PdfFilters {
         return output.toByteArray()
     }
 
-    /**
-     * PDF PNG-up predictor (12-15) used after FlateDecode for some streams.
-     * Only "predictor 1" (no prediction) and "predictor 12" (PNG up) are
-     * commonly seen on text content streams; we support no-op (1) and
-     * pass-through for anything else (cross fingers — most content streams
-     * don't use predictors at all).
-     */
-    private fun applyPredictor(bytes: ByteArray, parms: PdfObject.Dictionary?): ByteArray {
+    private fun applyPredictor(bytes: ByteArray, parms: PdfObject.Dictionary?): ByteArray? {
         if (parms == null) return bytes
         val predictor = (parms.entries["Predictor"] as? PdfObject.IntegerValue)?.value?.toInt() ?: 1
         if (predictor <= 1) return bytes
-        // Predictor 12: each row begins with a 1-byte tag, followed by `columns` bytes;
-        // we just strip the row tags and concatenate. Imperfect but adequate for text.
+        val colors = (parms.entries["Colors"] as? PdfObject.IntegerValue)?.value?.toInt() ?: 1
         val columns = (parms.entries["Columns"] as? PdfObject.IntegerValue)?.value?.toInt() ?: 1
-        if (columns <= 0) return bytes
-        val rowSize = columns + 1
-        if (bytes.size < rowSize) return bytes
-        val out = ByteArrayOutputStream(bytes.size)
-        var i = 0
-        while (i < bytes.size) {
-            val end = minOf(i + rowSize, bytes.size)
-            if (end - i > 1) out.write(bytes, i + 1, end - i - 1)
-            i += rowSize
+        val bitsPerComponent = (parms.entries["BitsPerComponent"] as? PdfObject.IntegerValue)
+            ?.value
+            ?.toInt()
+            ?: 8
+        if (colors <= 0 || columns <= 0 || bitsPerComponent <= 0) return null
+        val rowBits = colors.toLong() * columns.toLong() * bitsPerComponent.toLong()
+        val pixelBits = colors.toLong() * bitsPerComponent.toLong()
+        val rowBytes = ((rowBits + 7L) / 8L).takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return null
+        val bytesPerPixel = ((pixelBits + 7L) / 8L).takeIf { it in 1..Int.MAX_VALUE }?.toInt() ?: return null
+        return when (predictor) {
+            2 -> decodeTiffPredictor(bytes, rowBytes, bytesPerPixel, bitsPerComponent)
+            in 10..15 -> decodePngPredictor(bytes, rowBytes, bytesPerPixel, predictor)
+            else -> null
         }
-        return out.toByteArray()
+    }
+
+    private fun decodeTiffPredictor(
+        bytes: ByteArray,
+        rowBytes: Int,
+        bytesPerPixel: Int,
+        bitsPerComponent: Int,
+    ): ByteArray? {
+        if (bitsPerComponent != 8 || bytes.size % rowBytes != 0) return null
+        val decoded = bytes.copyOf()
+        var rowStart = 0
+        while (rowStart < decoded.size) {
+            for (column in bytesPerPixel until rowBytes) {
+                val index = rowStart + column
+                decoded[index] = (
+                    (decoded[index].toInt() and 0xff) +
+                        (decoded[index - bytesPerPixel].toInt() and 0xff)
+                    ).toByte()
+            }
+            rowStart += rowBytes
+        }
+        return decoded
+    }
+
+    private fun decodePngPredictor(
+        bytes: ByteArray,
+        rowBytes: Int,
+        bytesPerPixel: Int,
+        predictor: Int,
+    ): ByteArray? {
+        val hasRowTags = predictor == 15
+        val encodedRowBytes = rowBytes + if (hasRowTags) 1 else 0
+        if (encodedRowBytes <= 0 || bytes.size % encodedRowBytes != 0) return null
+        val rowCount = bytes.size / encodedRowBytes
+        val decodedSize = rowCount.toLong() * rowBytes.toLong()
+        if (decodedSize > Int.MAX_VALUE) return null
+        val decoded = ByteArray(decodedSize.toInt())
+        var sourceOffset = 0
+        for (row in 0 until rowCount) {
+            val filter = if (hasRowTags) {
+                bytes[sourceOffset++].toInt() and 0xff
+            } else {
+                predictor - 10
+            }
+            if (filter !in 0..4) return null
+            val rowStart = row * rowBytes
+            for (column in 0 until rowBytes) {
+                val raw = bytes[sourceOffset++].toInt() and 0xff
+                val left = if (column >= bytesPerPixel) {
+                    decoded[rowStart + column - bytesPerPixel].toInt() and 0xff
+                } else {
+                    0
+                }
+                val up = if (row > 0) decoded[rowStart + column - rowBytes].toInt() and 0xff else 0
+                val upperLeft = if (row > 0 && column >= bytesPerPixel) {
+                    decoded[rowStart + column - rowBytes - bytesPerPixel].toInt() and 0xff
+                } else {
+                    0
+                }
+                val predicted = when (filter) {
+                    0 -> 0
+                    1 -> left
+                    2 -> up
+                    3 -> (left + up) / 2
+                    4 -> paethPredictor(left, up, upperLeft)
+                    else -> return null
+                }
+                decoded[rowStart + column] = ((raw + predicted) and 0xff).toByte()
+            }
+        }
+        return decoded
+    }
+
+    private fun paethPredictor(left: Int, up: Int, upperLeft: Int): Int {
+        val estimate = left + up - upperLeft
+        val leftDistance = kotlin.math.abs(estimate - left)
+        val upDistance = kotlin.math.abs(estimate - up)
+        val upperLeftDistance = kotlin.math.abs(estimate - upperLeft)
+        return when {
+            leftDistance <= upDistance && leftDistance <= upperLeftDistance -> left
+            upDistance <= upperLeftDistance -> up
+            else -> upperLeft
+        }
     }
 
     private fun asciiHexDecode(bytes: ByteArray): ByteArray {
