@@ -268,6 +268,49 @@ internal object SyntheticPdfBuilder {
         )
     }
 
+    fun twoPageOutlineWithUnknownWideXrefEntryType(): ByteArray {
+        val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
+        val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
+        val objects = listOf(
+            "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+            pageOneContent,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+            pageTwoContent,
+            "<< /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>",
+            "<< /Title (Unknown type chapter 1) /Parent 8 0 R /Dest [3 0 R /Fit] /Next 10 0 R >>",
+            "<< /Title (Unknown type chapter 2) /Parent 8 0 R /Dest [6 0 R /Fit] /Prev 9 0 R >>",
+        )
+        val output = ByteArrayOutputStream()
+        val offsets = mutableListOf<Long>()
+        output.write("%PDF-1.5\n".toByteArray(StandardCharsets.ISO_8859_1))
+        objects.forEachIndexed { index, body ->
+            offsets += output.size().toLong()
+            output.write("${index + 1} 0 obj\n$body\nendobj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        }
+        val xrefObjectNumber = objects.size + 1
+        val xrefOffset = output.size().toLong()
+        val totalObjects = xrefObjectNumber + 1
+        val entries = ByteArrayOutputStream()
+        writeWideTypeXrefStreamEntry(entries, type = 0L, field1 = 0L, field2 = 65535)
+        offsets.forEachIndexed { index, offset ->
+            val type = if (index == 0) 0x1_0000_0001L else 1L
+            writeWideTypeXrefStreamEntry(entries, type = type, field1 = offset, field2 = 0)
+        }
+        writeWideTypeXrefStreamEntry(entries, type = 1L, field1 = xrefOffset, field2 = 0)
+        val xrefBytes = entries.toByteArray()
+        output.write("$xrefObjectNumber 0 obj\n".toByteArray(StandardCharsets.ISO_8859_1))
+        output.write(
+            "<< /Type /XRef /Size $totalObjects /Root 1 0 R /W [8 4 2] /Index [0 $totalObjects] /Length ${xrefBytes.size} >>\nstream\n"
+                .toByteArray(StandardCharsets.ISO_8859_1)
+        )
+        output.write(xrefBytes)
+        output.write("\nendstream\nendobj\nstartxref\n$xrefOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
     fun twoPageOutlineWithCommentBeforeXrefStreamKeyword(): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
         val pageTwoContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter two page) Tj ET")
@@ -463,6 +506,20 @@ internal object SyntheticPdfBuilder {
         output.write("\nendstream\nendobj\nstartxref\n$xrefStreamOffset\n%%EOF\n".toByteArray(StandardCharsets.ISO_8859_1))
         return output.toByteArray()
     }
+
+    fun onePagePdfWithExhaustedObjectNumberSpace(): ByteArray {
+        val original = helloWorld()
+        val text = original.toString(StandardCharsets.ISO_8859_1)
+        return text.replace("/Size 6 ", "/Size 2147483647 ")
+            .toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    fun pdfWithMalformedCatalogStreamSyntax(): ByteArray = buildPdfObjects(
+        listOf(
+            "<< /Type /Catalog /Pages 2 0 R /Length 0 >>\nstreamX\nendstream",
+            "<< /Type /Pages /Count 0 >>",
+        )
+    )
 
     fun twoPageOutlineWithXrefAndObjectStreams(): ByteArray {
         val pageOneContent = streamObject("BT /F1 12 Tf 100 700 Td (Chapter one page) Tj ET")
@@ -799,6 +856,22 @@ internal object SyntheticPdfBuilder {
     ) {
         output.write(type)
         for (byteIndex in field1Width - 1 downTo 0) {
+            output.write(((field1 shr (byteIndex * 8)) and 0xff).toInt())
+        }
+        output.write((field2 shr 8) and 0xff)
+        output.write(field2 and 0xff)
+    }
+
+    private fun writeWideTypeXrefStreamEntry(
+        output: ByteArrayOutputStream,
+        type: Long,
+        field1: Long,
+        field2: Int,
+    ) {
+        for (byteIndex in 7 downTo 0) {
+            output.write(((type shr (byteIndex * 8)) and 0xff).toInt())
+        }
+        for (byteIndex in 3 downTo 0) {
             output.write(((field1 shr (byteIndex * 8)) and 0xff).toInt())
         }
         output.write((field2 shr 8) and 0xff)

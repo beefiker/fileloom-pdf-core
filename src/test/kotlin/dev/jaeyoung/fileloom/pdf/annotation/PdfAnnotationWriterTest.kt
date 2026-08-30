@@ -6,6 +6,7 @@ import dev.jaeyoung.fileloom.pdf.text.SyntheticPdfBuilder
 import java.nio.charset.StandardCharsets
 import kotlin.test.Test
 import kotlin.test.assertNotNull
+import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
 
 class PdfAnnotationWriterTest {
@@ -63,5 +64,25 @@ class PdfAnnotationWriterTest {
         val raw = annotated.toString(StandardCharsets.ISO_8859_1)
         assertTrue(raw.contains("51 0 obj\n<< /Type /Annot"))
         assertTrue(raw.contains("/Size 52"))
+    }
+
+    @Test
+    fun refusesAnnotationExportWhenObjectNumberSpaceIsExhausted() {
+        val original = SyntheticPdfBuilder.onePagePdfWithExhaustedObjectNumberSpace()
+
+        val annotated = PdfAnnotationWriter.appendAnnotations(
+            pdfBytes = original,
+            annotations = listOf(
+                PdfAnnotation.StickyNote(
+                    pageIndex = 0,
+                    x = 100f,
+                    y = 100f,
+                    color = PdfAnnotationColor(1f, 0.8f, 0.1f),
+                    contents = "Cannot allocate",
+                )
+            ),
+        )
+
+        assertContentEquals(original, annotated)
     }
 }

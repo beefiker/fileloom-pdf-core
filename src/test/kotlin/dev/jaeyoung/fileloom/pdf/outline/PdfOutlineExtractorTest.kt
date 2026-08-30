@@ -193,6 +193,30 @@ class PdfOutlineExtractorTest {
     }
 
     @Test
+    fun unknownWideXrefEntryTypeDoesNotNarrowIntoKnownType() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithUnknownWideXrefEntryType())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(emptyList(), it.extractTableOfContents())
+        }
+    }
+
+    @Test
+    fun malformedStreamHeaderFailsSoftlyDuringReferenceResolution() {
+        val extractor = PdfOutlineExtractor.open(
+            ByteArrayPdfByteSource(SyntheticPdfBuilder.pdfWithMalformedCatalogStreamSyntax())
+        )
+        assertNotNull(extractor)
+
+        extractor.use {
+            assertEquals(emptyList(), it.extractTableOfContents())
+        }
+    }
+
+    @Test
     fun locatesXrefStreamKeywordAfterCommentsAndLongWhitespace() {
         val extractor = PdfOutlineExtractor.open(
             ByteArrayPdfByteSource(SyntheticPdfBuilder.twoPageOutlineWithCommentBeforeXrefStreamKeyword())
